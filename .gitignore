@@ -16,6 +16,7 @@ build/
 .codex/
 AGENTS.md
 makesomething.json
+create_treasury_shield_brief.py
 public/milestones.json
 
 # generated local files
