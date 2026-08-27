@@ -1,0 +1,23 @@
+# dependencies and build output
+node_modules/
+.next/
+out/
+build/
+
+# local files and secrets
+.env*
+.tmp/
+.tmp-*.log
+*.pem
+
+# internal project state
+.agents/
+.claude/
+.codex/
+AGENTS.md
+makesomething.json
+public/milestones.json
+
+# generated local files
+next-env.d.ts
+*.tsbuildinfo
