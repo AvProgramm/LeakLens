@@ -1,0 +1,16 @@
+{
+  "name": "leaklens-data-layer",
+  "version": "0.1.0",
+  "description": "LeakLens data-layer: XposedOrNot integration, email input, shared breach JSON contract",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0",
+    "cors": "^2.8.5"
+  }
+}
