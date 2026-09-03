@@ -1,0 +1,425 @@
+/* ============================================================
+   LeakLens Dashboard — design tokens
+
+   Concept: clarity through a lens. The real data (leaks found)
+   renders in full colour and full confidence. The AI/Gonka
+   layer, not yet wired up, renders in a distinct "unfocused"
+   visual state — dashed edges, muted tone — so it reads as
+   genuinely pending rather than broken or fake.
+   ============================================================ */
+
+:root {
+  --ink: #0F1620;
+  --surface: #16202C;
+  --surface-raised: #1C2836;
+  --border: #263447;
+
+  --text-primary: #E8ECEF;
+  --text-secondary: #8B98A5;
+  --text-tertiary: #5C6B7A;
+
+  --lens: #4FD1C5;
+  --lens-dim: #2E7A72;
+  --amber: #F5A623;
+  --coral: #E85D5D;
+  --green: #6FCF97;
+
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+.page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+/* ---------- Header ---------- */
+
+.scan-header {
+  margin-bottom: 40px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--lens);
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 26px;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.tagline {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 16px;
+  max-width: 40ch;
+}
+
+/* ---------- Scan panel ---------- */
+
+.scan-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 28px;
+  margin-bottom: 24px;
+}
+
+.scan-panel label {
+  display: block;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.input-row {
+  display: flex;
+  gap: 10px;
+}
+
+#email-input {
+  flex: 1;
+  background: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 15px;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+#email-input:focus {
+  outline: 2px solid var(--lens);
+  outline-offset: 1px;
+  border-color: var(--lens);
+}
+
+#scan-button {
+  background: var(--lens);
+  color: #0A1512;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 24px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+}
+
+#scan-button:hover { background: #6EE0D5; }
+#scan-button:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+#scan-button:disabled { opacity: 0.6; cursor: default; }
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(10,21,18,0.35);
+  border-top-color: #0A1512;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.scan-hint {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+/* ---------- Error / empty / clean states ---------- */
+
+.error-banner {
+  background: rgba(232, 93, 93, 0.1);
+  border: 1px solid rgba(232, 93, 93, 0.4);
+  color: #F3A5A5;
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.empty-state, .clean-state {
+  text-align: left;
+  color: var(--text-secondary);
+  padding: 32px 4px;
+  font-size: 15px;
+}
+
+.clean-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 2px solid var(--green);
+  padding-left: 20px;
+}
+
+.clean-mark { color: var(--green); margin-bottom: 4px; }
+.clean-state p { margin: 0; }
+.clean-sub { color: var(--text-tertiary); font-size: 13px; }
+
+/* ---------- Results ---------- */
+
+.summary-row {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 32px;
+}
+
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 34px;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .split { grid-template-columns: 1fr; }
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 18px;
+  margin: 0 0 16px;
+}
+
+/* ---------- Breach list ---------- */
+
+.breach-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.breach-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  counter-increment: breach;
+  position: relative;
+  padding-left: 52px;
+}
+
+.breach-item::before {
+  content: counter(breach);
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--lens);
+  border: 1px solid var(--lens-dim);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.breach-list { counter-reset: breach; }
+
+.breach-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.breach-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.breach-year {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.breach-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.data-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.data-chip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+/* ---------- AI panel (placeholder state) ---------- */
+
+.ai-panel {
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  position: relative;
+}
+
+.ai-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.ai-panel-header h2 { margin-bottom: 0; }
+
+.pending-badge {
+  font-size: 11px;
+  color: var(--amber);
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.score-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 18px;
+}
+
+.score-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 44px;
+  color: var(--text-tertiary);
+}
+
+.score-max {
+  font-size: 16px;
+  color: var(--text-tertiary);
+}
+
+.score-label {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.consensus-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+}
+
+.consensus-label { color: var(--text-secondary); }
+.consensus-value { color: var(--text-tertiary); font-weight: 600; }
+
+.model-verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.model-verdict-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.model-verdict-name { color: var(--text-secondary); }
+
+.reasoning-trace {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.reasoning-trace h3 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.reasoning-content p {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin: 0 0 8px;
+  font-style: italic;
+}
+
+.ai-footnote {
+  margin: 20px 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
