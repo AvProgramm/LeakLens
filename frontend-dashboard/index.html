@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeakLens — Data leak assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page">
+
+    <header class="scan-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="28" height="28">
+            <circle cx="14" cy="14" r="9" fill="none" stroke="currentColor" stroke-width="2.5"/>
+            <line x1="20.5" y1="20.5" x2="27" y2="27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="brand-name">LeakLens</span>
+      </div>
+      <p class="tagline">Know what's exposed. Know what to do.</p>
+    </header>
+
+    <section class="scan-panel">
+      <form id="scan-form" novalidate>
+        <label for="email-input">Email address</label>
+        <div class="input-row">
+          <input id="email-input" type="email" placeholder="you@example.com" autocomplete="off" required />
+          <button type="submit" id="scan-button">
+            <span class="btn-label">Scan</span>
+            <span class="btn-spinner" hidden></span>
+          </button>
+        </div>
+        <p class="scan-hint">Checked against known public data leaks. Your email isn't stored after this session.</p>
+      </form>
+    </section>
+
+    <div id="error-banner" class="error-banner" hidden></div>
+
+    <section id="empty-state" class="empty-state">
+      <p>Enter an email above to see what's been exposed.</p>
+    </section>
+
+    <section id="clean-state" class="clean-state" hidden>
+      <div class="clean-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22">
+          <path d="M4 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p>No known leaks found for this email in current public breach data.</p>
+      <p class="clean-sub">This checks known, disclosed leaks only — it can't confirm an email has never been exposed anywhere.</p>
+    </section>
+
+    <section id="results" class="results" hidden>
+
+      <div class="summary-row">
+        <div class="summary-stat">
+          <span class="stat-value" id="breach-count">0</span>
+          <span class="stat-label">leaks found</span>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-value" id="records-exposed">0</span>
+          <span class="stat-label">records in those leaks</span>
+        </div>
+      </div>
+
+      <div class="split">
+
+        <div class="breach-column">
+          <h2>What was found</h2>
+          <ol id="breach-list" class="breach-list"></ol>
+        </div>
+
+        <div class="ai-column">
+          <div class="ai-panel" id="ai-panel">
+            <div class="ai-panel-header">
+              <h2>Leak Score</h2>
+              <span class="pending-badge">AI layer pending</span>
+            </div>
+
+            <div class="score-display">
+              <span class="score-value" id="leak-score">--</span>
+              <span class="score-max">/100</span>
+            </div>
+            <p class="score-label" id="score-label">Awaiting Gonka Router integration</p>
+
+            <div class="consensus-row">
+              <span class="consensus-label">Model consensus</span>
+              <span class="consensus-value" id="consensus-status">--</span>
+            </div>
+
+            <div class="model-verdicts" id="model-verdicts"></div>
+
+            <div class="reasoning-trace">
+              <h3>Reasoning trace</h3>
+              <div id="reasoning-content" class="reasoning-content"></div>
+            </div>
+
+            <p class="ai-footnote">
+              Every score above will carry a live Gonka Request ID once wired up, so any verdict here can be independently verified after the fact.
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
