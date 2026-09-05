@@ -175,7 +175,8 @@ function setBreachAIChip(breachName, statusLabel, score) {
     `.ai-chip-slot[data-ai-chip-for="${cssEscape(breachName)}"]`
   );
   if (!slot) return;
-  slot.innerHTML = `<span class="ai-chip ai-chip-${statusLabel.toLowerCase()}">${score}/100 · ${escapeHtml(statusLabel)}</span>`;
+  const scoreText = score === null || score === undefined ? "" : `${score}/100 · `;
+  slot.innerHTML = `<span class="ai-chip ai-chip-flagged">${scoreText}${escapeHtml(statusLabel)}</span>`;
 }
 
 function cssEscape(str) {
@@ -262,81 +263,106 @@ function renderAIVerdict(analysis) {
   setAIStatus("live");
   aiStatusBadgeEl.textContent = "Live · Gonka Router";
 
+  // Each model returns its OWN Truth Score. The headline is reconciled from
+  // those, so if no model answered there is no number to show.
+  const verdicts = (analysis.truthScores || []).filter(Boolean);
+  const answered = verdicts.filter((v) => v.ok);
+
+  if (analysis.overallRiskScore === null || answered.length === 0) {
+    showAIUnavailable("No model returned a usable Truth Score.");
+    return;
+  }
+
   const tier = scoreTier(analysis.overallRiskScore);
   leakScoreEl.textContent = analysis.overallRiskScore;
   leakScoreEl.className = `score-value ${tier.className}`;
   scoreRingEl.className = `score-ring ${tier.ringClass}`;
   scoreLabelEl.textContent = `${tier.label} risk`;
 
-  // Consensus divergence styling
+  // Consensus styling. The backend reports agreement / divergence /
+  // single-model / unverified.
   consensusStatusEl.className = "consensus-value";
-  if (analysis.consensusStatus === "consensus") {
-    consensusStatusEl.textContent = "Agreement";
+  const apart = analysis.scoreDifference != null ? ` · ${analysis.scoreDifference} pts apart` : "";
+
+  if (analysis.consensusStatus === "agreement") {
+    consensusStatusEl.textContent = `Agreement${apart}`;
     consensusStatusEl.classList.add("status-agreement");
-  } else if (analysis.consensusStatus === "disputed") {
-    consensusStatusEl.textContent = "Models disagree";
+  } else if (analysis.consensusStatus === "divergence") {
+    consensusStatusEl.textContent = `Models disagree${apart}`;
     consensusStatusEl.classList.add("status-dispute");
   } else {
     consensusStatusEl.textContent = STATUS_LABELS[analysis.consensusStatus] || analysis.consensusStatus;
     consensusStatusEl.classList.add("status-single");
   }
 
+  const notes = [];
   if (analysis.truncated) {
-    coverageNoteEl.hidden = false;
-    coverageNoteEl.textContent = `Showing the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
-  } else {
-    coverageNoteEl.hidden = true;
+    notes.push(`Judged the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`);
   }
+  // If the router served the same model twice there was no real
+  // cross-verification, and saying otherwise would be dishonest.
+  if (analysis.consensusNote) notes.push(analysis.consensusNote);
+
+  coverageNoteEl.hidden = notes.length === 0;
+  coverageNoteEl.textContent = notes.join(" ");
 
   if (analysis.models && analysis.models.length) {
     modelsLineEl.hidden = false;
     modelsLineEl.textContent = `Cross-checked by ${analysis.models.join(" and ")}`;
   }
 
-  breachVerdictsEl.innerHTML = analysis.breaches.map(renderBreachVerdict).join("");
+  breachVerdictsEl.innerHTML = verdicts.map(renderModelTruthScore).join("");
 
-  analysis.breaches.forEach((b) => {
-    const label = STATUS_LABELS[b.status] || b.status;
-    setBreachAIChip(b.name, label, b.finalScore);
+  // Mark the breaches the models themselves named as the biggest risks.
+  (analysis.breaches || []).forEach((breach) => {
+    if (breach.flaggedByModel) setBreachAIChip(breach.name, "Flagged", null);
   });
 }
 
-function renderBreachVerdict(breach) {
-  const statusLabel = STATUS_LABELS[breach.status] || breach.status;
-  const diffNote =
-    breach.status === "disputed" && breach.scoreDifference
-      ? `<span class="score-diff">Δ ${breach.scoreDifference} pts</span>`
-      : "";
+/**
+ * One card per model: its own Truth Score, evidence, reasoning, recommended
+ * action, and the Gonka Request ID proving the score came from the network.
+ */
+function renderModelTruthScore(verdict) {
+  if (!verdict) return "";
+
+  if (!verdict.ok) {
+    return `
+      <div class="breach-verdict-card">
+        <div class="breach-verdict-header">
+          <span class="breach-verdict-name">${escapeHtml(verdict.model)}</span>
+          <span class="verdict-status-pill status-unavailable">No response</span>
+        </div>
+        <div class="model-verdict-block model-no-response">
+          ${escapeHtml(verdict.error || "This model did not answer.")}
+        </div>
+      </div>
+    `;
+  }
+
+  const tier = scoreTier(verdict.truthScore);
+  // Show who ACTUALLY answered - the router does not always honour the
+  // requested model, and claiming otherwise would misrepresent the proof.
+  const answeringModel = verdict.actualModel || verdict.model;
+  const misroutedNote = verdict.misrouted
+    ? `<span class="score-diff">requested ${escapeHtml(verdict.model)}</span>`
+    : "";
 
   return `
     <div class="breach-verdict-card">
       <div class="breach-verdict-header">
-        <span class="breach-verdict-name">${escapeHtml(breach.name)}</span>
-        <span class="verdict-status-pill status-${breach.status}">${escapeHtml(statusLabel)}</span>
+        <span class="breach-verdict-name">${escapeHtml(answeringModel)}</span>
+        <span class="verdict-status-pill status-consensus">Truth Score</span>
       </div>
-      <div class="breach-verdict-score">
-        ${breach.finalScore ?? "--"}/100 ${diffNote}
+      <div class="breach-verdict-score ${tier.className}">
+        ${verdict.truthScore}/100 ${misroutedNote}
       </div>
-      <div class="model-compare">
-        ${renderModelVerdict(breach.modelA)}
-        ${renderModelVerdict(breach.modelB)}
+      <div class="model-verdict-block">
+        ${verdict.evidence ? `<p class="model-evidence">${escapeHtml(verdict.evidence)}</p>` : ""}
+        <p class="model-reasoning">${escapeHtml(verdict.reasoning || "")}</p>
+        ${verdict.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(verdict.recommendedAction)}</p>` : ""}
+        <p class="request-id">Gonka Request ID: <code>${escapeHtml(verdict.requestId || "n/a")}</code></p>
       </div>
-    </div>
-  `;
-}
-
-function renderModelVerdict(model) {
-  if (!model) return "";
-  if (!model.ok) {
-    return `<div class="model-verdict-block model-no-response">No response from this model</div>`;
-  }
-  return `
-    <div class="model-verdict-block">
-      <div class="model-verdict-name">${escapeHtml(model.model)} · ${model.severityScore}/100</div>
-      <p class="model-evidence">${escapeHtml(model.evidence || "")}</p>
-      <p class="model-reasoning">${escapeHtml(model.reasoning || "")}</p>
-      ${model.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(model.recommendedAction)}</p>` : ""}
-      <p class="request-id">Gonka Request ID: <code>${escapeHtml(model.requestId || "n/a")}</code></p>
     </div>
   `;
 }

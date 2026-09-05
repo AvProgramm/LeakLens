@@ -448,3 +448,16 @@ h2 {
 .ai-chip-unavailable { color: var(--text-tertiary); }
 
 .ai-footnote { margin: 20px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.5; }
+/* Breaches the models themselves named as the biggest risks. */
+.ai-chip-flagged {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--amber);
+  background: rgba(203, 147, 80, 0.12);
+  border: 1px solid rgba(203, 147, 80, 0.35);
+}
+
+.status-unavailable { color: var(--coral); }

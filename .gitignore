@@ -26,3 +26,6 @@ public/milestones.json
 # generated local files
 next-env.d.ts
 *.tsbuildinfo
+
+# macOS finder metadata
+.DS_Store
