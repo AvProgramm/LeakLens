@@ -15,4 +15,10 @@ tests/privacy/           retention and input-safety checks
 tests/flow/              end-to-end user journey checks
 ```
 
-No feature implementation, private keys, environment files, breach dumps, or personal data belongs in the scaffold.
+The data-layer now carries the working implementation (breach lookup, Gonka
+Router consensus) and its own test suite in `data-layer/tests/`. The
+top-level `tests/` directories remain for team-level checks across areas.
+
+No private keys, environment files, breach dumps, or personal data belongs in
+this repository. Secrets live only in `data-layer/.env`, which is git-ignored;
+`data-layer/.env.example` is the tracked template.

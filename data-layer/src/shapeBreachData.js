@@ -51,13 +51,22 @@ function riskLabel(score) {
   return 'High';
 }
 
+// XON's xposed_date is sometimes a bare year ("2015") and sometimes a full
+// date ("2015-03-01"). The contract promises a year, so we take the leading
+// four digits and fall back to the raw value if it isn't date-shaped.
+function extractYear(rawDate) {
+  if (rawDate === undefined || rawDate === null) return '';
+  const match = String(rawDate).match(/\d{4}/);
+  return match ? match[0] : String(rawDate);
+}
+
 function normalizeBreachDetail(detail) {
   return {
     name: detail.breach ?? detail.name ?? 'Unknown',
     domain: detail.domain ?? '',
-    year: detail.xposed_date ?? detail.year ?? '',
+    year: extractYear(detail.xposed_date ?? detail.year),
     industry: detail.industry ?? '',
-    recordsExposed: detail.xposed_records ?? 0,
+    recordsExposed: Number(detail.xposed_records) || 0,
     passwordRisk: detail.password_risk ?? 'unknown',
     dataExposed: typeof detail.xposed_data === 'string'
       ? detail.xposed_data.split(';').map((s) => s.trim()).filter(Boolean)
@@ -71,17 +80,25 @@ function normalizeBreachDetail(detail) {
 // passwords_strength from XON comes as an array of [label, count] pairs
 // in an order that isn't formally documented. We map by label text so
 // this doesn't silently break if the order changes.
+//
+// Every count is coerced with Number() and accumulated with +=. XON has
+// been seen to send counts as strings, and the contract documents these as
+// numbers - without the coercion a downstream `strongHash + easyToCrack`
+// would concatenate ("1" + "0" = "10") instead of adding. Accumulating
+// rather than assigning also means two pairs whose labels both match the
+// same bucket sum correctly instead of the second silently winning.
 function normalizePasswordStrength(pairs) {
   const out = { strongHash: 0, easyToCrack: 0, plainText: 0, unknown: 0 };
   if (!Array.isArray(pairs)) return out;
   for (const pair of pairs) {
     if (!Array.isArray(pair)) continue;
-    const [rawLabel, count] = pair;
+    const [rawLabel, rawCount] = pair;
     const label = String(rawLabel).toLowerCase();
-    if (label.includes('easy')) out.easyToCrack = count;
-    else if (label.includes('hard') || label.includes('strong')) out.strongHash = count;
-    else if (label.includes('plain') || label.includes('clear')) out.plainText = count;
-    else out.unknown += Number(count) || 0;
+    const count = Number(rawCount) || 0;
+    if (label.includes('easy')) out.easyToCrack += count;
+    else if (label.includes('hard') || label.includes('strong')) out.strongHash += count;
+    else if (label.includes('plain') || label.includes('clear')) out.plainText += count;
+    else out.unknown += count;
   }
   return out;
 }
@@ -92,8 +109,8 @@ function normalizeYearlyBreakdown(pairs) {
   if (!Array.isArray(pairs)) return out;
   for (const pair of pairs) {
     if (!Array.isArray(pair)) continue;
-    const [year, count] = pair;
-    out[String(year)] = count;
+    const [year, rawCount] = pair;
+    out[String(year)] = Number(rawCount) || 0;
   }
   return out;
 }

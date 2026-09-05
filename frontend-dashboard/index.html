@@ -35,7 +35,11 @@
             <span class="btn-spinner" hidden></span>
           </button>
         </div>
-        <p class="scan-hint">Checked against known public data leaks. Your email isn't stored after this session.</p>
+        <p class="scan-hint">
+          Checked against known public data leaks. Your address is never written to disk and
+          never sent to the AI models — only the names of the breaches are. Results are held
+          in memory against a one-way hash for up to 15 minutes, then discarded.
+        </p>
       </form>
     </section>
 
@@ -92,6 +96,8 @@
               <span class="consensus-label">Model consensus</span>
               <span class="consensus-value" id="consensus-status">--</span>
             </div>
+
+            <p id="ai-status" class="ai-status ai-status-info" hidden></p>
 
             <div class="model-verdicts" id="model-verdicts"></div>
 

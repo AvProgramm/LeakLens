@@ -5,7 +5,11 @@ out/
 build/
 
 # local files and secrets
-.env*
+# Real secrets never get committed. The .env.example template is the one
+# exception - it holds placeholder values only and is what teammates copy.
+.env
+.env.*
+!.env.example
 .tmp/
 .tmp-*.log
 *.pem
