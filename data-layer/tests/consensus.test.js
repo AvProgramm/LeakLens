@@ -18,10 +18,14 @@ import {
 
 const exampleBreach = { name: 'ExampleBreach' };
 
-function successfulVerdict(model, severityScore) {
+function successfulVerdict(model, severityScore, actualModel = model) {
   return {
     ok: true,
     model,
+    // Who actually answered. Defaults to the requested model; pass a
+    // different value to simulate the router misrouting the request.
+    actualModel,
+    misrouted: actualModel !== model,
     severityScore,
     reasoning: 'reason',
     recommendedAction: 'action',
@@ -74,6 +78,34 @@ test('the consensus boundary is inclusive', () => {
     successfulVerdict('B', 41 + CONSENSUS_THRESHOLD),
   );
   assert.equal(justOver.status, 'disputed');
+});
+
+// The Gonka Router was observed serving one model's answer for a different
+// model's request. If that happens, the two verdicts are not independent and
+// we must not present them as cross-verified.
+test('two verdicts from the same actual model are not called consensus', () => {
+  const result = reconcileModelVerdicts(
+    exampleBreach,
+    successfulVerdict('modelA', 80, 'MiniMaxAI/MiniMax-M2.7'),
+    // Requested modelB, but the router answered with MiniMax again.
+    successfulVerdict('modelB', 82, 'MiniMaxAI/MiniMax-M2.7'),
+  );
+
+  assert.equal(result.status, 'unverified');
+  assert.match(result.note, /not independent/);
+  // Still reports a score, but the cautious one.
+  assert.equal(result.finalScore, 82);
+});
+
+test('genuinely different models still reach consensus', () => {
+  const result = reconcileModelVerdicts(
+    exampleBreach,
+    successfulVerdict('modelA', 80, 'MiniMaxAI/MiniMax-M2.7'),
+    successfulVerdict('modelB', 85, 'deepseek-ai/DeepSeek-V4-Flash-0731'),
+  );
+
+  assert.equal(result.status, 'consensus');
+  assert.equal(result.finalScore, 83);
 });
 
 test('one model failing still yields a labelled single-model result', () => {
@@ -136,6 +168,43 @@ test('model JSON survives markdown fences and surrounding prose', () => {
 
 test('unparseable model output raises rather than returning junk', () => {
   assert.throws(() => parseModelJson('I cannot help with that.'));
+});
+
+// The models Gonka routes to are reasoning models. These are the exact
+// shapes they were observed producing against the live router.
+test('a closed <think> block is stripped before parsing', () => {
+  const reply = `<think>The user wants {"severity_score": 0-100, ...}. I will say 92.</think>
+{"severity_score": 92, "evidence": "plaintext passwords", "reasoning": "r", "recommended_action": "a"}`;
+
+  const parsed = parseModelJson(reply);
+  // 92 is the answer; the 0-100 inside the reasoning must not be mistaken
+  // for it, and the two objects must not be merged into one bad span.
+  assert.equal(parsed.severity_score, 92);
+  assert.equal(parsed.evidence, 'plaintext passwords');
+});
+
+test('a draft inside reasoning does not beat the final answer', () => {
+  const reply = `<think>Maybe {"severity_score": 40} … on reflection that is too low.</think>
+{"severity_score": 88, "reasoning": "r", "recommended_action": "a"}`;
+
+  assert.equal(parseModelJson(reply).severity_score, 88);
+});
+
+test('an unclosed <think> still yields the last complete assessment', () => {
+  // What a truncated reasoning model leaves behind: no closing tag, with the
+  // candidate answer sitting inside the reasoning.
+  const truncated = `<think>Weighing it up. Thus produce:
+
+{"severity_score": 92, "evidence": "e", "reasoning": "r", "recommended_action": "a"}
+
+Check format: fields are correct.`;
+
+  assert.equal(parseModelJson(truncated).severity_score, 92);
+});
+
+test('braces inside strings do not break object detection', () => {
+  const reply = '{"severity_score": 70, "reasoning": "uses a { brace } literally", "recommended_action": "a"}';
+  assert.equal(parseModelJson(reply).reasoning, 'uses a { brace } literally');
 });
 
 test('out-of-range or missing scores are rejected', () => {

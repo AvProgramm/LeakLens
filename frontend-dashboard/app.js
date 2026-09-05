@@ -313,17 +313,31 @@ function renderAiVerdict(report) {
   leakScoreEl.textContent = report.overallRiskScore;
   scoreLabelEl.textContent = `${riskTier(report.overallRiskScore)} risk — live Gonka assessment`;
 
-  consensusStatusEl.textContent =
-    report.consensusStatus === "agreement"
-      ? "Models agree"
-      : `Models disagree on ${report.disputedCount} of ${analyzed.length}`;
+  if (report.consensusStatus === "divergence") {
+    consensusStatusEl.textContent = `Models disagree on ${report.disputedCount} of ${analyzed.length}`;
+  } else if (report.consensusStatus === "agreement") {
+    consensusStatusEl.textContent = `Models agree on ${report.crossVerifiedCount} of ${analyzed.length}`;
+  } else {
+    consensusStatusEl.textContent = "Not cross-verified";
+  }
 
   // Be explicit when only a subset was analysed, so the headline number is
   // never quietly based on less data than the breach list shows.
   const coverageNote = report.truncated
     ? `Analysed the ${report.analyzedBreaches} largest of ${report.totalBreaches} breaches via ${report.models.join(" + ")}.`
     : `Analysed all ${report.analyzedBreaches} breaches via ${report.models.join(" + ")}.`;
-  setAiStatus(coverageNote, "info");
+
+  // If the router answered some breaches with the same model twice, say so.
+  // Claiming cross-verification that did not happen is the one thing this
+  // dashboard must never do.
+  if (report.unverifiedCount > 0) {
+    setAiStatus(
+      `${coverageNote} Note: on ${report.unverifiedCount} of ${analyzed.length}, the Gonka Router returned the same model for both requests, so those are not independently cross-verified.`,
+      "warn"
+    );
+  } else {
+    setAiStatus(coverageNote, "info");
+  }
 
   renderModelVerdicts(analyzed);
   renderReasoningTrace(analyzed);
@@ -377,6 +391,7 @@ function renderReasoningTrace(analyzed) {
       consensus: "both models agree",
       disputed: "models disagree",
       "single-model": "one model only",
+      unverified: "same model answered twice",
       unavailable: "no verdict",
     };
 

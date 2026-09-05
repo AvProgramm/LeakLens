@@ -81,8 +81,8 @@ Two independent models cross-verify every breach. IDs are **case-sensitive**
 and configurable:
 
 ```
-GONKA_MODEL_PRIMARY=moonshotai/Kimi-K2.6
-GONKA_MODEL_SECONDARY=MiniMaxAI/MiniMax-M2.7
+GONKA_MODEL_PRIMARY=MiniMaxAI/MiniMax-M2.7
+GONKA_MODEL_SECONDARY=deepseek-ai/DeepSeek-V4-Flash-0731
 ```
 
 If either 404s, run `npm run verify-gonka` — it prints the exact catalogue
@@ -90,11 +90,19 @@ your key can reach, then paste the correct IDs into `.env`.
 
 ### Consensus logic
 
+> **Router caveat, verified live.** `moonshotai/Kimi-K2.6` is listed in the
+> catalogue but requests for it are answered by MiniMax, and DeepSeek is
+> occasionally misrouted the same way. Every response is checked against the
+> model that actually answered (`actualModel`); a misroute is retried once,
+> and if both verdicts still come from one model the breach is reported as
+> `unverified` rather than being passed off as cross-verified.
+
 | Condition | `status` | `finalScore` |
 |---|---|---|
 | scores within 25 points | `consensus` | mean of the two |
 | scores more than 25 apart | `disputed` | **the higher score** |
 | only one model answered | `single-model` | that model's score |
+| the router served one model twice | `unverified` | the higher score, clearly labelled |
 | neither answered | `unavailable` | `null` — never invented |
 
 On a genuine dispute we take the *higher* score on purpose: under-warning

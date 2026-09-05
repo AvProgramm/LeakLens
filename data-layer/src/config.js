@@ -6,7 +6,14 @@
  * single place to look when the demo machine behaves differently.
  */
 
-import 'dotenv/config';
+import { config as loadDotenv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+
+// Resolve data-layer/.env relative to THIS FILE, not the working directory.
+// `npm start` from the repo root launches the server with cwd set to the
+// root, so the bare `dotenv/config` import silently found no .env and the
+// server reported Gonka as unconfigured despite the key being present.
+loadDotenv({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
 // The Gonka Router is OpenAI-compatible, so the base URL must keep the
 // /v1 suffix - the OpenAI SDK appends only "/chat/completions" to it.
@@ -17,27 +24,33 @@ const GONKA_BASE_URL = process.env.GONKA_BASE_URL || 'https://api.gonkarouter.io
 // They are env-overridable because model IDs are case-sensitive and the
 // router's catalogue can change between now and judging - `npm run
 // verify-gonka` prints the live list if either of these ever 404s.
-const GONKA_MODEL_PRIMARY = process.env.GONKA_MODEL_PRIMARY || 'moonshotai/Kimi-K2.6';
-const GONKA_MODEL_SECONDARY = process.env.GONKA_MODEL_SECONDARY || 'MiniMaxAI/MiniMax-M2.7';
+const GONKA_MODEL_PRIMARY = process.env.GONKA_MODEL_PRIMARY || 'MiniMaxAI/MiniMax-M2.7';
+const GONKA_MODEL_SECONDARY = process.env.GONKA_MODEL_SECONDARY || 'deepseek-ai/DeepSeek-V4-Flash-0731';
 
 // The API key is intentionally NOT defaulted. A missing key must surface as
 // a clear 503 from the analysis endpoint, never as a confusing auth error
 // from deep inside the SDK.
 const GONKA_API_KEY = process.env.GONKA_API_KEY || '';
 
-// Model calls are capped so that an email found in 40 breaches cannot open
-// 80 sockets at once. Six in flight keeps a full scan fast while staying
-// well inside any per-key concurrency ceiling the router enforces.
+// Maximum MODEL CALLS in flight at once (not breaches - each breach makes
+// two calls). The router returns 429 "too many concurrent requests for this
+// account" above roughly this level, so keep it conservative.
 const GONKA_MAX_CONCURRENCY = Number(process.env.GONKA_MAX_CONCURRENCY) || 6;
 
 // A single model call that hangs must not hang the whole scan. The router
 // is normally sub-ten-seconds; 45s is generous headroom before we give up.
-const GONKA_TIMEOUT_MS = Number(process.env.GONKA_TIMEOUT_MS) || 45000;
+const GONKA_TIMEOUT_MS = Number(process.env.GONKA_TIMEOUT_MS) || 120000;
+
+// Both routed models are REASONING models: they emit a long <think> block
+// before their answer. At 400 tokens they were being cut off mid-thought
+// (finish_reason "length") and never reached the JSON at all. This budget
+// has to cover the reasoning AND the answer, so it is deliberately large.
+const GONKA_MAX_TOKENS = Number(process.env.GONKA_MAX_TOKENS) || 4000;
 
 // Analysing every breach an email appears in is slow and rarely changes the
 // verdict, so we assess the most severe-looking ones and report the rest as
 // counted-but-unanalysed. Keeps a live demo inside a sensible time budget.
-const MAX_BREACHES_ANALYZED = Number(process.env.MAX_BREACHES_ANALYZED) || 8;
+const MAX_BREACHES_ANALYZED = Number(process.env.MAX_BREACHES_ANALYZED) || 3;
 
 // XposedOrNot allows only 25 requests/hour per IP with no key, so cached
 // results are what keeps a repeated demo alive. 15 minutes comfortably
@@ -74,6 +87,7 @@ export {
   GONKA_API_KEY,
   GONKA_MAX_CONCURRENCY,
   GONKA_TIMEOUT_MS,
+  GONKA_MAX_TOKENS,
   MAX_BREACHES_ANALYZED,
   CACHE_TTL_MS,
   RATE_LIMIT_WINDOW_MS,

@@ -22,6 +22,7 @@ import {
   GONKA_API_KEY,
   GONKA_BASE_URL,
   GONKA_TIMEOUT_MS,
+  GONKA_MAX_TOKENS,
 } from './config.js';
 
 // Header names that gateways commonly use for the per-request identifier,
@@ -95,7 +96,7 @@ async function callGonkaModel(client, model, prompt) {
       .create({
         model,
         temperature: 0,
-        max_tokens: 400,
+        max_tokens: GONKA_MAX_TOKENS,
         messages: [{ role: 'user', content: prompt }],
       })
       .withResponse();
@@ -107,14 +108,36 @@ async function callGonkaModel(client, model, prompt) {
       throw error;
     }
 
+    // finish_reason "length" means the model hit the token ceiling before it
+    // finished. For a reasoning model that usually means it was still
+    // thinking and never wrote its answer, so say that explicitly instead of
+    // letting it surface later as a confusing JSON parse failure.
+    const finishReason = data?.choices?.[0]?.finish_reason ?? null;
+    if (finishReason === 'length') {
+      const error = new Error(
+        `Gonka model ${model} was cut off at the token limit (raise GONKA_MAX_TOKENS)`,
+      );
+      error.code = 'GONKA_TRUNCATED';
+      error.partialText = text;
+      throw error;
+    }
+
     const { requestId, requestIdSource } = extractRequestId(response, data);
+
+    // The router does not always honour the requested model - a model can be
+    // listed in /v1/models and still be served by a different one. The
+    // response says who actually answered, and that is what we report, so we
+    // never claim a model produced a verdict it did not produce.
+    const actualModel = data?.model ?? model;
 
     return {
       model,
+      actualModel,
+      misrouted: actualModel !== model,
       text,
       requestId,
       requestIdSource,
-      finishReason: data?.choices?.[0]?.finish_reason ?? null,
+      finishReason,
     };
   } catch (error) {
     // Preserve the diagnosis while adding which model failed. Re-throwing a

@@ -76,27 +76,103 @@ function buildSeverityPrompt(breach) {
 }
 
 /**
- * Models sometimes wrap JSON in code fences or add a sentence before it
- * despite instructions. We strip fences, then fall back to slicing out the
- * outermost {...} block, so one chatty model cannot fail an entire scan.
+ * Both models routed through Gonka are REASONING models: they emit a long
+ * <think>…</think> block before answering, and that block quotes our own
+ * prompt back - including the example JSON in it. Naively slicing from the
+ * first "{" to the last "}" would therefore capture the model's scratch
+ * work rather than its answer.
+ *
+ * So we remove closed reasoning blocks first, and when we do have to scan
+ * the raw text (a truncated response leaves <think> unclosed) we take the
+ * LAST balanced object that actually parses and carries a severity_score -
+ * the model's final answer, not an earlier draft of it.
  */
-function parseModelJson(text) {
-  const withoutFences = text
+function stripReasoningBlocks(text) {
+  return text.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '').trim();
+}
+
+function stripCodeFences(text) {
+  return text
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
+}
 
-  try {
-    return JSON.parse(withoutFences);
-  } catch {
-    const firstBrace = withoutFences.indexOf('{');
-    const lastBrace = withoutFences.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      return JSON.parse(withoutFences.slice(firstBrace, lastBrace + 1));
+/**
+ * Find every balanced {...} region, ignoring braces that appear inside
+ * strings. A plain indexOf/lastIndexOf pair cannot do this: it merges two
+ * separate objects into one unparseable span.
+ */
+function findBalancedJsonObjects(text) {
+  const objects = [];
+  let depth = 0;
+  let startIndex = -1;
+  let insideString = false;
+  let escapeNext = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (insideString) {
+      if (escapeNext) escapeNext = false;
+      else if (character === '\\') escapeNext = true;
+      else if (character === '"') insideString = false;
+      continue;
     }
-    throw new Error('model did not return parseable JSON');
+
+    if (character === '"') insideString = true;
+    else if (character === '{') {
+      if (depth === 0) startIndex = index;
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0 && startIndex !== -1) {
+        objects.push(text.slice(startIndex, index + 1));
+        startIndex = -1;
+      }
+      if (depth < 0) depth = 0;
+    }
   }
+
+  return objects;
+}
+
+/**
+ * Return the last candidate that parses and looks like an assessment.
+ */
+function selectAssessmentObject(candidates) {
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(candidates[index]);
+      if (parsed && typeof parsed === 'object' && 'severity_score' in parsed) return parsed;
+    } catch {
+      // Not valid JSON - keep looking further back.
+    }
+  }
+  return null;
+}
+
+function parseModelJson(text) {
+  const withoutReasoning = stripCodeFences(stripReasoningBlocks(text));
+
+  // The clean case: the answer is the whole remaining string.
+  try {
+    const parsed = JSON.parse(withoutReasoning);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    // Fall through to scanning.
+  }
+
+  // Prose around the answer, or an unclosed reasoning block. Scan the
+  // reasoning-stripped text first, then the raw text as a last resort.
+  const fromStripped = selectAssessmentObject(findBalancedJsonObjects(withoutReasoning));
+  if (fromStripped) return fromStripped;
+
+  const fromRaw = selectAssessmentObject(findBalancedJsonObjects(text));
+  if (fromRaw) return fromRaw;
+
+  throw new Error('model did not return parseable JSON');
 }
 
 /**
@@ -126,23 +202,45 @@ function normalizeAssessment(rawAssessment) {
  */
 async function assessWithSingleModel(client, model, breach) {
   try {
-    const completion = await callGonkaModel(client, model, buildSeverityPrompt(breach));
+    let completion = await callGonkaModel(client, model, buildSeverityPrompt(breach));
+
+    // The router sometimes answers with a different model than the one we
+    // asked for, which would cost us the independence that makes this
+    // cross-verification meaningful. Misrouting is intermittent, so one
+    // retry usually lands on the right model. We only pay for this retry
+    // when a misroute actually happened.
+    if (completion.misrouted) {
+      console.warn(
+        `[analyze] ${model} was misrouted to ${completion.actualModel}; retrying once`,
+      );
+      completion = await callGonkaModel(client, model, buildSeverityPrompt(breach));
+    }
+
     const assessment = normalizeAssessment(parseModelJson(completion.text));
 
     return {
       ok: true,
       model,
+      // Who actually answered, which is not always who we asked for.
+      actualModel: completion.actualModel,
+      misrouted: completion.misrouted,
       requestId: completion.requestId,
       requestIdSource: completion.requestIdSource,
       ...assessment,
     };
   } catch (error) {
-    // A rate limit is the one failure worth escalating to the caller,
-    // because retrying the rest of the scan will hit the same wall.
-    if (error.code === 'RATE_LIMITED') throw error;
-
+    // Even a 429 stays contained. The router's 429 is usually a concurrency
+    // ceiling rather than an exhausted quota, so failing this one call and
+    // keeping the other verdicts is far better than discarding a whole scan
+    // that is most of the way done.
     console.error(`[analyze] model ${model} failed:`, error.message);
-    return { ok: false, model, error: error.message };
+    return {
+      ok: false,
+      model,
+      error: error.code === 'RATE_LIMITED'
+        ? 'router was busy (concurrency limit)'
+        : error.message,
+    };
   }
 }
 
@@ -182,6 +280,22 @@ function reconcileModelVerdicts(breach, primaryVerdict, secondaryVerdict) {
     primaryVerdict.severityScore - secondaryVerdict.severityScore,
   );
   const modelsAgree = scoreDifference <= CONSENSUS_THRESHOLD;
+
+  // If the router served the same model for both requests, there was no
+  // cross-verification - two answers from one model are not independent.
+  // We report that honestly rather than presenting it as consensus, because
+  // the whole claim of this product is that two models checked each other.
+  if (primaryVerdict.actualModel === secondaryVerdict.actualModel) {
+    return {
+      name: breach.name,
+      status: 'unverified',
+      finalScore: Math.max(primaryVerdict.severityScore, secondaryVerdict.severityScore),
+      scoreDifference,
+      note: `The router answered both requests with ${primaryVerdict.actualModel}, so these two verdicts are not independent.`,
+      modelA: primaryVerdict,
+      modelB: secondaryVerdict,
+    };
+  }
 
   return {
     name: breach.name,
@@ -247,21 +361,48 @@ async function analyzeBreachSeverity(shapedBreachData) {
 
   const client = createGonkaClient();
 
-  const analyzedBreaches = await mapWithConcurrencyLimit(
-    breachesToAnalyze,
+  // Flatten to one task per MODEL CALL rather than per breach. The router
+  // limits concurrent requests per account, and that limit counts calls -
+  // so limiting breaches (each of which fires two calls) would quietly
+  // allow twice the parallelism we asked for and trip a 429.
+  const modelCallTasks = breachesToAnalyze.flatMap((breach) => [
+    { breach, model: GONKA_MODEL_PRIMARY },
+    { breach, model: GONKA_MODEL_SECONDARY },
+  ]);
+
+  const completedCalls = await mapWithConcurrencyLimit(
+    modelCallTasks,
     GONKA_MAX_CONCURRENCY,
-    async (breach) => {
-      // The two models run against each other in parallel; the outer
-      // concurrency limiter is what stops every breach doing this at once.
-      const [primaryVerdict, secondaryVerdict] = await Promise.all([
-        assessWithSingleModel(client, GONKA_MODEL_PRIMARY, breach),
-        assessWithSingleModel(client, GONKA_MODEL_SECONDARY, breach),
-      ]);
-      return reconcileModelVerdicts(breach, primaryVerdict, secondaryVerdict);
-    },
+    async (task) => ({
+      breach: task.breach,
+      model: task.model,
+      verdict: await assessWithSingleModel(client, task.model, task.breach),
+    }),
   );
 
+  // Regroup the flat results back into one entry per breach, preserving the
+  // original order so the most severe breach stays first.
+  const analyzedBreaches = breachesToAnalyze.map((breach) => {
+    const callsForBreach = completedCalls.filter((call) => call.breach === breach);
+    const primaryVerdict = callsForBreach.find((call) => call.model === GONKA_MODEL_PRIMARY)?.verdict;
+    const secondaryVerdict = callsForBreach.find((call) => call.model === GONKA_MODEL_SECONDARY)?.verdict;
+
+    return reconcileModelVerdicts(
+      breach,
+      primaryVerdict ?? { ok: false, model: GONKA_MODEL_PRIMARY, error: 'no result' },
+      secondaryVerdict ?? { ok: false, model: GONKA_MODEL_SECONDARY, error: 'no result' },
+    );
+  });
+
   const disputedCount = analyzedBreaches.filter((breach) => breach.status === 'disputed').length;
+
+  // Breaches where the router gave us the same model twice were not really
+  // cross-verified, and saying "agreement" about them would overstate what
+  // happened. They get their own count so the dashboard can be honest.
+  const unverifiedCount = analyzedBreaches.filter((breach) => breach.status === 'unverified').length;
+  const crossVerifiedCount = analyzedBreaches.filter(
+    (breach) => breach.status === 'consensus' || breach.status === 'disputed',
+  ).length;
 
   return {
     email: shapedBreachData.email,
@@ -272,8 +413,12 @@ async function analyzeBreachSeverity(shapedBreachData) {
     // never quietly based on less data than the user thinks.
     truncated: allBreaches.length > analyzedBreaches.length,
     overallRiskScore: calculateOverallRiskScore(analyzedBreaches),
-    consensusStatus: disputedCount > 0 ? 'divergence' : 'agreement',
+    consensusStatus: disputedCount > 0
+      ? 'divergence'
+      : crossVerifiedCount > 0 ? 'agreement' : 'unverified',
     disputedCount,
+    crossVerifiedCount,
+    unverifiedCount,
     models: [GONKA_MODEL_PRIMARY, GONKA_MODEL_SECONDARY],
     breaches: analyzedBreaches,
   };

@@ -539,6 +539,7 @@ h2 {
 .status-disputed { color: var(--amber); }
 .status-consensus { color: var(--green); }
 .status-single-model { color: var(--text-secondary); }
+.status-unverified { color: var(--amber); }
 .status-unavailable { color: var(--coral); }
 
 .reasoning-line {
