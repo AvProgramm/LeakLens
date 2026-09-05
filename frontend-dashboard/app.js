@@ -4,7 +4,33 @@
 
 const CONFIG = {
   DATA_LAYER_BASE: "http://localhost:4000",
+
+  // Ceilings on how long we wait before giving up. The AI call runs two
+  // reasoning models on a decentralized network and legitimately takes
+  // 15-80s, so its budget is generous - but it must be finite, or a stalled
+  // router leaves the panel spinning with no way for the user to tell
+  // whether it is working.
+  BREACH_TIMEOUT_MS: 30000,
+  AI_TIMEOUT_MS: 180000,
 };
+
+/**
+ * fetch with a deadline. AbortController is what actually cancels the
+ * in-flight request; without it a hung connection holds the UI forever.
+ */
+async function fetchWithTimeout(url, timeoutMs, timeoutMessage) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error(timeoutMessage);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Client-side session cache to eliminate rate limits during repeated testing
 const SESSION_CACHE = {
@@ -134,7 +160,11 @@ async function fetchBreachData(email) {
   }
 
   const url = `${CONFIG.DATA_LAYER_BASE}/api/check-email?email=${encodeURIComponent(email)}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(
+    url,
+    CONFIG.BREACH_TIMEOUT_MS,
+    "The leak database took too long to respond. Try again shortly.",
+  );
   const data = await res.json();
 
   if (!res.ok) {
@@ -268,7 +298,11 @@ async function fetchAIAnalysis(email) {
   }
 
   const url = `${CONFIG.DATA_LAYER_BASE}/api/analyze-breach?email=${encodeURIComponent(email)}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(
+    url,
+    CONFIG.AI_TIMEOUT_MS,
+    "The Gonka Router took too long to respond. The breach report above is still valid.",
+  );
   const data = await res.json();
 
   if (!res.ok) {
@@ -286,7 +320,7 @@ async function fetchAIAnalysis(email) {
 
 function setAIStatus(state) {
   aiUnavailableEl.hidden = state !== "unavailable";
-  const labels = { loading: "Checking…", unavailable: "Unavailable" };
+  const labels = { loading: "Asking two models…", unavailable: "Unavailable" };
   aiStatusBadgeEl.textContent = labels[state] || "";
   aiStatusBadgeEl.className = `ai-status-badge ai-status-${state}`;
 }

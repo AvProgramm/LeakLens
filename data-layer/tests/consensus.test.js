@@ -12,6 +12,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   reconcileTruthScores,
+  matchesFlaggedRisk,
+  normalizeBreachKey,
   parseModelJson,
   normalizeAssessment,
   buildTruthScorePrompt,
@@ -175,4 +177,38 @@ test('a valid assessment is rounded and normalised', () => {
 
 test('the legacy severity_score key is still accepted', () => {
   assert.equal(normalizeAssessment({ severity_score: 61, reasoning: 'r' }).truthScore, 61);
+});
+
+
+// Models paraphrase breach names. Exact string comparison meant a paraphrase
+// produced no flag at all, which reads as "nothing was flagged" rather than
+// as a matching failure.
+test('flagged-risk matching survives the ways models rewrite a name', () => {
+  const flagged = ['Collection #1', 'the ExploitIN dump'].map(normalizeBreachKey);
+
+  assert.equal(matchesFlaggedRisk('Collection-1', flagged), true);
+  assert.equal(matchesFlaggedRisk('ExploitIN', flagged), true);
+  assert.equal(matchesFlaggedRisk('collection 1', flagged), true);
+});
+
+test('flagged-risk matching does not flag unrelated breaches', () => {
+  const flagged = ['Collection-1'].map(normalizeBreachKey);
+
+  assert.equal(matchesFlaggedRisk('AntiPublicCombo', flagged), false);
+  assert.equal(matchesFlaggedRisk('Verifications', flagged), false);
+  assert.equal(matchesFlaggedRisk('', flagged), false);
+});
+
+test('a short key cannot match half the list by containment', () => {
+  // "AI" normalises to a 2-char key; without the length floor it would be a
+  // substring of almost every breach name.
+  const flagged = ['AI'].map(normalizeBreachKey);
+  assert.equal(matchesFlaggedRisk('AlienStealerLogs', flagged), false);
+  assert.equal(matchesFlaggedRisk('Chain-AI', flagged), false);
+});
+
+test('normalizeBreachKey strips punctuation, case and spacing', () => {
+  assert.equal(normalizeBreachKey('Collection #1'), 'collection1');
+  assert.equal(normalizeBreachKey('Anti-Public Combo'), 'antipubliccombo');
+  assert.equal(normalizeBreachKey(null), '');
 });

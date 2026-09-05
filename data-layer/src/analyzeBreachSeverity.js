@@ -36,6 +36,11 @@ import {
 // this and we report a genuine dispute rather than splitting the difference.
 const CONSENSUS_THRESHOLD = 25;
 
+// A misroute is only worth retrying if the first attempt came back quickly.
+// Retrying a call that already took a minute can push one verdict past four
+// minutes, and an honest "not cross-verified" beats a demo that hangs.
+const MISROUTE_RETRY_BUDGET_MS = 45000;
+
 /**
  * Render the breach profile the models judge. Only breach metadata goes in;
  * the person's email address never leaves our side of the boundary.
@@ -230,16 +235,24 @@ function normalizeAssessment(rawAssessment) {
  * leaves the other model's verdict intact.
  */
 async function getTruthScoreFromModel(client, model, breaches) {
+  const startedAt = Date.now();
+
   try {
     let completion = await callGonkaModel(client, model, buildTruthScorePrompt(breaches));
 
     // The router sometimes answers with a different model than requested,
     // which would cost us the independence that makes cross-verification
     // meaningful. Misrouting is intermittent, so one retry usually lands on
-    // the right model, and we only pay for it when it actually happens.
-    if (completion.misrouted) {
+    // the right model - but only retry while there is time budget left, so
+    // a slow AND misrouted call cannot stall the whole scan.
+    const elapsedMs = Date.now() - startedAt;
+    if (completion.misrouted && elapsedMs <= MISROUTE_RETRY_BUDGET_MS) {
       console.warn(`[analyze] ${model} was misrouted to ${completion.actualModel}; retrying once`);
       completion = await callGonkaModel(client, model, buildTruthScorePrompt(breaches));
+    } else if (completion.misrouted) {
+      console.warn(
+        `[analyze] ${model} was misrouted to ${completion.actualModel} after ${Math.round(elapsedMs / 1000)}s; not retrying`,
+      );
     }
 
     const assessment = normalizeAssessment(parseModelJson(completion.text));
@@ -319,6 +332,33 @@ function reconcileTruthScores(primaryVerdict, secondaryVerdict) {
   };
 }
 
+/**
+ * Models paraphrase breach names - "Collection #1", "the Collection-1 dump".
+ * Comparing raw strings meant a paraphrase silently produced no flag at all,
+ * which reads as "nothing was flagged" rather than as a matching failure. We
+ * compare on a punctuation- and space-free key instead.
+ */
+function normalizeBreachKey(name) {
+  return String(name ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * A breach is flagged when its key matches a model's, or when one key
+ * contains the other. The length floor stops a short key like "ai" from
+ * matching half the list.
+ */
+function matchesFlaggedRisk(breachName, flaggedKeys) {
+  const breachKey = normalizeBreachKey(breachName);
+  if (!breachKey) return false;
+
+  return flaggedKeys.some((flaggedKey) => {
+    if (flaggedKey === breachKey) return true;
+    const shorter = flaggedKey.length < breachKey.length ? flaggedKey : breachKey;
+    if (shorter.length < 5) return false;
+    return flaggedKey.includes(breachKey) || breachKey.includes(flaggedKey);
+  });
+}
+
 function riskTier(score) {
   if (score === null) return 'Unknown';
   if (score >= 75) return 'High';
@@ -375,6 +415,7 @@ async function analyzeBreachSeverity(shapedBreachData) {
   const flaggedRisks = [primaryVerdict, secondaryVerdict]
     .filter((verdict) => verdict?.ok)
     .flatMap((verdict) => verdict.topRisks);
+  const flaggedKeys = flaggedRisks.map(normalizeBreachKey).filter(Boolean);
 
   return {
     email,
@@ -405,9 +446,7 @@ async function analyzeBreachSeverity(shapedBreachData) {
       recordsExposed: breach.recordsExposed,
       passwordRisk: breach.passwordRisk,
       dataExposed: breach.dataExposed,
-      flaggedByModel: flaggedRisks.some(
-        (risk) => risk.toLowerCase() === String(breach.name).toLowerCase(),
-      ),
+      flaggedByModel: matchesFlaggedRisk(breach.name, flaggedKeys),
     })),
   };
 }
@@ -418,6 +457,8 @@ export {
   reconcileTruthScores,
   buildTruthScorePrompt,
   buildSeverityPrompt,
+  matchesFlaggedRisk,
+  normalizeBreachKey,
   parseModelJson,
   normalizeAssessment,
   riskTier,
