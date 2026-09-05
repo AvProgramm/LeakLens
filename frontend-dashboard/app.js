@@ -175,7 +175,8 @@ function setBreachAIChip(breachName, statusLabel, score) {
     `.ai-chip-slot[data-ai-chip-for="${cssEscape(breachName)}"]`
   );
   if (!slot) return;
-  slot.innerHTML = `<span class="ai-chip ai-chip-${statusLabel.toLowerCase()}">${score}/100 · ${escapeHtml(statusLabel)}</span>`;
+  const scoreText = score === null || score === undefined ? "" : `${score}/100 · `;
+  slot.innerHTML = `<span class="ai-chip ai-chip-flagged">${scoreText}${escapeHtml(statusLabel)}</span>`;
 }
 
 function cssEscape(str) {
@@ -202,13 +203,17 @@ function escapeHtml(str) {
    AI LAYER — real, hits data-layer's Gonka consensus endpoint
 
    GET /api/analyze-breach?email=... returns:
-     overallRiskScore, consensusStatus, disputedCount,
-     analyzedBreaches, totalBreaches, truncated, models[],
-     breaches[]: { name, status, finalScore, scoreDifference,
-                   modelA: { ok, model, severityScore, evidence,
-                             reasoning, recommendedAction,
-                             requestId, requestIdSource },
-                   modelB: { ...same shape } }
+     overallRiskScore   the reconciled headline Truth Score
+     riskTier           Low / Medium / High
+     consensusStatus    agreement | divergence | single-model
+                        | unverified | unavailable
+     scoreDifference    how far apart the two models were
+     consensusNote      set when the router served one model twice
+     analyzedBreaches, totalBreaches, truncated, models[]
+     truthScores[]: one per model, each that model's OWN score:
+       { ok, model, actualModel, truthScore, evidence, reasoning,
+         recommendedAction, topRisks[], requestId, requestIdSource }
+     breaches[]: { name, ..., flaggedByModel }
 
    503 means Gonka isn't configured (no key) — that's a normal,
    documented state, not a bug, so it's handled as "unavailable"
@@ -263,19 +268,49 @@ function renderAIVerdict(analysis) {
   setAIStatus("live");
   aiStatusBadgeEl.textContent = "Live · Gonka Router";
 
+  // Each model returns its OWN Truth Score for this email. The headline
+  // number is reconciled from those two scores, not computed by us.
+  const verdicts = (analysis.truthScores || []).filter(Boolean);
+  const answered = verdicts.filter((v) => v.ok);
+
+  if (analysis.overallRiskScore === null || answered.length === 0) {
+    leakScoreEl.textContent = "--";
+    leakScoreEl.className = "score-value";
+    scoreLabelEl.textContent = "No model verdict";
+    consensusStatusEl.textContent = "--";
+    breachVerdictsEl.innerHTML =
+      `<div class="model-no-response">No model returned a usable Truth Score.</div>`;
+    return;
+  }
+
   const tier = scoreTier(analysis.overallRiskScore);
   leakScoreEl.textContent = analysis.overallRiskScore;
   leakScoreEl.className = `score-value ${tier.className}`;
   scoreLabelEl.textContent = `${tier.label} risk`;
 
+  const consensusLabels = {
+    agreement: `Agreement · ${analysis.scoreDifference} pts apart`,
+    divergence: `Models disagree · ${analysis.scoreDifference} pts apart`,
+    "single-model": "Only one model responded",
+    unverified: "Not cross-verified",
+    unavailable: "No verdict",
+  };
   consensusStatusEl.textContent =
-    analysis.consensusStatus === "consensus" ? "Agreement" : "Models disagree";
+    consensusLabels[analysis.consensusStatus] || analysis.consensusStatus;
 
   if (analysis.truncated) {
     coverageNoteEl.hidden = false;
-    coverageNoteEl.textContent = `Showing the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
+    coverageNoteEl.textContent = `Judged the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
   } else {
     coverageNoteEl.hidden = true;
+  }
+
+  // If the router served one model twice, say so - claiming
+  // cross-verification that did not happen is the one thing we must not do.
+  if (analysis.consensusNote) {
+    coverageNoteEl.hidden = false;
+    coverageNoteEl.textContent =
+      `${coverageNoteEl.textContent} ${analysis.consensusNote}`.trim();
   }
 
   if (analysis.models && analysis.models.length) {
@@ -283,14 +318,39 @@ function renderAIVerdict(analysis) {
     modelsLineEl.textContent = `Cross-checked by ${analysis.models.join(" and ")}`;
   }
 
-  breachVerdictsEl.innerHTML = analysis.breaches.map(renderBreachVerdict).join("");
+  breachVerdictsEl.innerHTML = verdicts.map(renderModelTruthScore).join("");
 
-  // Cross-reference back onto the breach list above so each
-  // leak shows its own severity, not just the aggregate.
-  analysis.breaches.forEach((b) => {
-    const label = STATUS_LABELS[b.status] || b.status;
-    setBreachAIChip(b.name, label, b.finalScore);
+  // Mark the breaches the models themselves called out as the worst.
+  (analysis.breaches || []).forEach((b) => {
+    if (b.flaggedByModel) setBreachAIChip(b.name, "flagged by model", null);
   });
+}
+
+/**
+ * One card per model: its Truth Score, its evidence and reasoning, and the
+ * Gonka Request ID proving the score came from the network.
+ */
+function renderModelTruthScore(verdict) {
+  if (!verdict) return "";
+  if (!verdict.ok) {
+    return `<div class="model-verdict-block model-no-response">
+      ${escapeHtml(verdict.model)} — no response (${escapeHtml(verdict.error || "unknown")})
+    </div>`;
+  }
+
+  const tier = scoreTier(verdict.truthScore);
+  return `
+    <div class="model-verdict-block">
+      <div class="model-verdict-name">
+        ${escapeHtml(verdict.actualModel || verdict.model)}
+        · <span class="${tier.className}">${verdict.truthScore}/100</span>
+      </div>
+      ${verdict.evidence ? `<p class="model-evidence">${escapeHtml(verdict.evidence)}</p>` : ""}
+      <p class="model-reasoning">${escapeHtml(verdict.reasoning || "")}</p>
+      ${verdict.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(verdict.recommendedAction)}</p>` : ""}
+      <p class="request-id">Gonka Request ID: <code>${escapeHtml(verdict.requestId || "n/a")}</code></p>
+    </div>
+  `;
 }
 
 function renderBreachVerdict(breach) {

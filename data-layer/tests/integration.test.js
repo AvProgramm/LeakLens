@@ -48,6 +48,7 @@ function startStubRouter() {
       receivedRequestBodies.push(parsedBody);
 
       const severityScore = scoresByModel[parsedBody.model] ?? 50;
+      // Echo the requested model back, as a correctly-routing gateway does.
 
       res.writeHead(200, {
         'content-type': 'application/json',
@@ -56,12 +57,13 @@ function startStubRouter() {
       });
       res.end(JSON.stringify({
         id: `chatcmpl-${parsedBody.model}`,
+        model: parsedBody.model,
         choices: [{
           finish_reason: 'stop',
           message: {
             role: 'assistant',
             content: JSON.stringify({
-              severity_score: severityScore,
+              truth_score: severityScore,
               evidence: 'Passwords and email addresses',
               reasoning: 'Credentials were exposed.',
               recommended_action: 'Change the password and enable 2FA.',
@@ -117,12 +119,17 @@ test('a full analysis runs against an OpenAI-compatible router', async () => {
   assert.equal(report.analyzedBreaches, 1);
   assert.equal(report.truncated, false);
 
-  const [breach] = report.breaches;
-  // 80 and 85 are within the consensus threshold, so they average to 83.
-  assert.equal(breach.status, 'consensus');
-  assert.equal(breach.finalScore, 83);
+  // Each model returns its OWN Truth Score; 80 and 85 are within the
+  // agreement threshold, so the reconciled headline is their mean.
+  assert.equal(report.truthScores.length, 2);
+  assert.ok(report.truthScores.every((verdict) => verdict.ok));
+  assert.deepEqual(
+    report.truthScores.map((verdict) => verdict.truthScore).sort(),
+    [80, 85],
+  );
   assert.equal(report.overallRiskScore, 83);
   assert.equal(report.consensusStatus, 'agreement');
+  assert.equal(report.riskTier, 'High');
 });
 
 test('the request actually hit the chat-completions endpoint with bearer auth', () => {
@@ -144,25 +151,26 @@ test('both models are actually consulted, not just one', () => {
   assert.ok(modelsCalled.has('test/model-b'));
 });
 
-test('the Gonka Request ID is captured from the routing header', async () => {
+test('every model verdict carries its Gonka Request ID', async () => {
   const report = await analyzeBreachSeverity(shapedBreachData);
-  const [breach] = report.breaches;
 
-  assert.equal(breach.modelA.requestId, 'gonka-test/model-a-req');
-  assert.equal(breach.modelA.requestIdSource, 'x-gonka-request-id');
-  assert.equal(breach.modelB.requestId, 'gonka-test/model-b-req');
+  // The brief requires a Request ID per inference step, so every verdict
+  // must carry one and say which header it came from.
+  for (const verdict of report.truthScores) {
+    assert.ok(verdict.ok);
+    assert.equal(verdict.requestId, `gonka-${verdict.model}-req`);
+    assert.equal(verdict.requestIdSource, 'x-gonka-request-id');
+  }
 });
 
-test('a wide disagreement is reported as disputed and takes the higher score', async () => {
+test('a wide disagreement is reported as divergence, taking the higher score', async () => {
   scoresByModel['test/model-b'] = 20;
   try {
     const report = await analyzeBreachSeverity(shapedBreachData);
-    const [breach] = report.breaches;
 
-    assert.equal(breach.status, 'disputed');
-    assert.equal(breach.finalScore, 80);
     assert.equal(report.consensusStatus, 'divergence');
-    assert.equal(report.disputedCount, 1);
+    assert.equal(report.overallRiskScore, 80);
+    assert.equal(report.scoreDifference, 60);
   } finally {
     scoresByModel['test/model-b'] = 85;
   }
@@ -198,5 +206,8 @@ test('analysis is capped so a heavily-breached email cannot stall the demo', asy
 
   assert.equal(report.totalBreaches, 20);
   assert.equal(report.analyzedBreaches, 5, 'should respect MAX_BREACHES_ANALYZED');
-  assert.equal(report.truncated, true, 'must tell the user it analysed a subset');
+  assert.equal(report.truncated, true, 'must tell the user it judged a subset');
+  // One call per model regardless of breach count - that is what keeps a
+  // live demo fast and bounds the token spend.
+  assert.equal(receivedRequestBodies.length, 2, 'expected exactly one call per model');
 });
