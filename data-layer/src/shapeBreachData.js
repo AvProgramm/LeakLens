@@ -126,4 +126,4 @@ function shapeBreachData(email, raw) {
   };
 }
 
-module.exports = { shapeBreachData };
+export { shapeBreachData };

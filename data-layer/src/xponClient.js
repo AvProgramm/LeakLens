@@ -5,13 +5,61 @@
  * Docs: https://xposedornot.com/api_doc
  */
 
-const fetch = require('node-fetch');
+import fetch from 'node-fetch';
 
-const BASE_URL = 'https://api.xposedornot.com/v1/breach-analytics';
+const API_BASE_URL = 'https://api.xposedornot.com/v1';
+const MAX_RETRIES = 3;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function requestJson(url, label) {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        timeout: 10000,
+      });
+
+      if (res.status === 429) {
+        if (attempt === MAX_RETRIES - 1) {
+          const err = new Error(`${label} rate limit exceeded`);
+          err.code = 'RATE_LIMITED';
+          throw err;
+        }
+        await wait(500 * (2 ** attempt));
+        continue;
+      }
+
+      if (!res.ok) {
+        const err = new Error(`${label} API error: ${res.status}`);
+        err.code = 'XON_ERROR';
+        err.status = res.status;
+        throw err;
+      }
+
+      return await res.json();
+    } catch (err) {
+      if (err.code === 'RATE_LIMITED' || err.code === 'XON_ERROR') throw err;
+      if (attempt === MAX_RETRIES - 1) throw err;
+      await wait(250 * (2 ** attempt));
+    }
+  }
+}
+
+function getBreachNames(data) {
+  const names = data?.breaches ?? data?.Breaches ?? data?.breach_names ?? data?.BreachNames;
+  if (!Array.isArray(names)) return [];
+  const flattenedNames = names.flat();
+  return flattenedNames.map((name) => typeof name === 'string' ? name : name?.name ?? name?.breach)
+    .filter(Boolean);
+}
 
 /**
  * Fetch raw breach analytics for an email from XposedOrNot.
- * Returns the raw parsed JSON exactly as XON sends it — no shaping here.
+ * Returns the raw parsed JSON exactly as XON sends it - no shaping here.
  * Shaping happens in shapeBreachData.js so the two concerns stay separate
  * and testable independently.
  *
@@ -20,30 +68,18 @@ const BASE_URL = 'https://api.xposedornot.com/v1/breach-analytics';
  * @throws {Error} on network failure or non-2xx response
  */
 async function fetchBreachAnalytics(email) {
-  const url = `${BASE_URL}?email=${encodeURIComponent(email)}`;
-
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    timeout: 10000,
-  });
-
-  // XON returns 200 even for "no breaches found" — everything is null
-  // except BreachesSummary.site, which is "". We still guard on status
-  // for actual API failures / rate-limit responses.
-  if (!res.ok) {
-    if (res.status === 429) {
-      const err = new Error('XposedOrNot rate limit exceeded');
-      err.code = 'RATE_LIMITED';
-      throw err;
-    }
-    const err = new Error(`XposedOrNot API error: ${res.status}`);
-    err.code = 'XON_ERROR';
-    throw err;
-  }
-
-  const data = await res.json();
-  return data;
+  return requestJson(`${API_BASE_URL}/breach-analytics?email=${encodeURIComponent(email)}`, 'XposedOrNot');
 }
 
-module.exports = { fetchBreachAnalytics };
+async function fetchBreachNames(email) {
+  let data;
+  try {
+    data = await requestJson(`${API_BASE_URL}/check-email/${encodeURIComponent(email)}`, 'XposedOrNot');
+  } catch (error) {
+    if (error.code === 'XON_ERROR' && error.status === 404) return [];
+    throw error;
+  }
+  return getBreachNames(data);
+}
+
+export { fetchBreachAnalytics, fetchBreachNames };

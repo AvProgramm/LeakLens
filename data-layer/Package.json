@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "description": "LeakLens data-layer: XposedOrNot integration, email input, shared breach JSON contract",
   "main": "src/server.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.124.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "node-fetch": "^2.7.0",
-    "cors": "^2.8.5"
+    "node-fetch": "^2.7.0"
   }
 }

@@ -6,22 +6,15 @@
           data using the exact contract documented in that PR's
           README.
 
-   MOCK:  everything under "AI LAYER (PLACEHOLDER)" is static
-          fake data shaped like what Person 2's Gonka Router
-          integration will eventually return. It is clearly
-          labelled "AI layer pending" in the UI itself, not just
-          in code, so nobody mistakes it for a real verdict
-          during testing or the demo.
+     REAL:  the AI layer calls the data-layer Gonka analysis endpoint
+       and renders live model scores, reasoning, and request IDs.
 
-   When Person 2's endpoint exists, the ONLY function that needs
-   to change is getAIVerdict() near the bottom of this file. Its
-   signature and return shape are already the target contract —
-   see the TODO comment right above it.
+  The data-layer owns the Gonka Router calls and consensus logic.
    ============================================================ */
 
 const CONFIG = {
   // Point this at the deployed data-layer URL on demo day.
-  DATA_LAYER_BASE: "http://localhost:4000",
+  DATA_LAYER_BASE: "http://localhost:4001",
 };
 
 // ---------- DOM references ----------
@@ -180,49 +173,50 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/* ============================================================
-   AI LAYER (PLACEHOLDER) — mock, awaiting Gonka integration
-
-   TODO (Person 2): replace the body of getAIVerdict() with a
-   real call once the Gonka Router endpoint exists, e.g.:
-
-     async function getAIVerdict(breachData) {
-       const res = await fetch(`${CONFIG.AI_LAYER_BASE}/api/verdict`, {
-         method: "POST",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify(breachData),
-       });
-       return res.json();
-     }
-
-   Keep the return shape identical to MOCK_AI_VERDICT below —
-   the render function already expects exactly these fields.
-   ============================================================ */
-
-const MOCK_AI_VERDICT = {
-  exposure_risk_score: 62,
-  risk_tier: "Medium",
-  consensus_status: "divergence", // "agreement" | "divergence"
-  model_verdicts: [
-    { model: "model-a (placeholder)", severity: 58, gonka_request_id: "pending-integration" },
-    { model: "model-b (placeholder)", severity: 71, gonka_request_id: "pending-integration" },
-  ],
-  reasoning_trace: [
-    "Placeholder — once Gonka Router is wired up, each model's plain-language explanation of what was exposed and why it matters will render here.",
-    "Model disagreement, if any, will be shown explicitly here rather than averaged away silently.",
-  ],
-};
-
 async function getAIVerdict(breachData) {
-  // Small artificial delay so the UI's loading state behaves the
-  // same way it will once this is a real network call.
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  return MOCK_AI_VERDICT;
+  const url = `${CONFIG.DATA_LAYER_BASE}/api/analyze-breach?email=${encodeURIComponent(breachData.email)}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (!res.ok) {
+    throw new Error(data.error || "Couldn't complete the AI severity analysis.");
+  }
+
+  return {
+    exposure_risk_score: data.overallRiskScore,
+    risk_tier: riskTier(data.overallRiskScore),
+    consensus_status: data.breaches.some((breach) => breach.status === "disputed")
+      ? "divergence"
+      : "agreement",
+    model_verdicts: data.breaches.flatMap((breach) => [
+      {
+        model: `${breach.name} — ${breach.modelA.model}`,
+        severity: breach.modelA.severity_score,
+        gonka_request_id: breach.modelA.requestId,
+      },
+      {
+        model: `${breach.name} — ${breach.modelB.model}`,
+        severity: breach.modelB.severity_score,
+        gonka_request_id: breach.modelB.requestId,
+      },
+    ]),
+    reasoning_trace: data.breaches.flatMap((breach) => [
+      `${breach.name} (${breach.status}): ${breach.modelA.reasoning}`,
+      `${breach.name} recommended action: ${breach.modelA.recommended_action}`,
+      `${breach.name} second model: ${breach.modelB.reasoning}`,
+    ]),
+  };
+}
+
+function riskTier(score) {
+  if (score >= 75) return "High";
+  if (score >= 40) return "Medium";
+  return "Low";
 }
 
 function renderAIVerdict(verdict) {
   leakScoreEl.textContent = verdict.exposure_risk_score;
-  scoreLabelEl.textContent = `${verdict.risk_tier} risk — mock data, AI layer pending`;
+  scoreLabelEl.textContent = `${verdict.risk_tier} risk — live Gonka assessment`;
 
   consensusStatusEl.textContent =
     verdict.consensus_status === "agreement" ? "Agreement" : "Models disagree";
@@ -232,7 +226,7 @@ function renderAIVerdict(verdict) {
       (m) => `
       <div class="model-verdict-row">
         <span class="model-verdict-name">${escapeHtml(m.model)}</span>
-        <span>${m.severity}/100</span>
+        <span>${m.severity}/100<br><small>${escapeHtml(m.gonka_request_id)}</small></span>
       </div>
     `
     )

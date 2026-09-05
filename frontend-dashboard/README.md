@@ -17,14 +17,14 @@ npx serve .
 ## What's real vs. mock right now
 
 - **Real:** the email input, the fetch to `data-layer`'s `/api/check-email`, and every part of the breach list (name, year, industry, records exposed, data types, password risk). This is wired to the actual contract from PR #1.
-- **Mock:** the entire "Leak Score" panel (score, consensus, model verdicts, reasoning trace). This is static placeholder data shaped like what the Gonka/AI layer will eventually return, clearly labelled "AI layer pending" in the UI itself so it's never mistaken for a real verdict during testing.
+- **Real:** the "Leak Score" panel calls `/api/analyze-breach`, showing the aggregate score, both model verdicts, consensus status, reasoning, recommended action, and Gonka request IDs.
 
-## Wiring in the real AI layer
+## AI layer
 
-Everything needed to swap the mock for the real thing lives in `app.js`. Look for `getAIVerdict()`, that's the one function to change. Its input (`breachData`, the exact object `fetchBreachData()` returns) and output shape (matching `MOCK_AI_VERDICT`) are already the agreed contract, so nothing else in the file should need to change.
+`app.js` calls the data-layer `/api/analyze-breach` endpoint after breach data is loaded. The data layer requires `GONKA_API_KEY` in its local `.env` file.
 
 ## Files
 
 - `index.html` — page structure
 - `style.css` — all styling, theme tokens at the top of the file
-- `app.js` — data-layer fetch (real) + AI-layer mock (placeholder), see comments inside
+- `app.js` — data-layer and live AI analysis fetches

@@ -16,6 +16,15 @@ npm start          # http://localhost:4000
 GET /api/check-email?email=user@example.com
 ```
 
+AI severity analysis is available at:
+
+```
+GET /api/analyze-breach?email=user@example.com
+```
+
+Set `GONKA_API_KEY` in a local `.env` file before using the analysis endpoint.
+The endpoint calls both `moonshotai/Kimi-K2.6` and `MiniMaxAI/MiniMax-M2.7` through Gonka Router and returns the consensus/dispute report, including each Gonka response ID.
+
 ### Response — the contract
 
 ```json

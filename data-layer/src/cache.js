@@ -24,4 +24,4 @@ function set(key, value, ttlMs = DEFAULT_TTL_MS) {
   store.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 
-module.exports = { get, set };
+export { get, set };
