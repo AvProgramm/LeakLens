@@ -8,6 +8,7 @@
  * without telling the team, three other areas code against this contract.
  */
 
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -28,12 +29,25 @@ import {
 
 const app = express();
 
+// The dashboard is served by this same server, which means one deployment
+// instead of two, no CORS between them, and no deployed-URL to configure in
+// the frontend. Locally `npm run dev:full` still serves the dashboard on its
+// own port; both work because the frontend resolves its API base at runtime.
+const dashboardDirectory = fileURLToPath(new URL('../../frontend-dashboard', import.meta.url));
+
 // Behind a hosting proxy (Render, Railway, Fly) the client IP arrives in
 // X-Forwarded-For. Trusting one hop lets the rate limiter see real client
 // IPs instead of counting every visitor as the same proxy address.
 app.set('trust proxy', 1);
 
 app.use(cors(CORS_ORIGINS.length > 0 ? { origin: CORS_ORIGINS } : {}));
+
+// Static dashboard. Declared before the API routes so it never shadows them
+// (nothing under /api or /health exists as a file), and with no-store so a
+// judge reloading mid-demo never gets a stale build.
+app.use(express.static(dashboardDirectory, {
+  setHeaders: (res) => res.set('cache-control', 'no-store'),
+}));
 app.use(express.json({ limit: '16kb' }));
 
 /**

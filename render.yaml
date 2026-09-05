@@ -1,0 +1,74 @@
+# Render blueprint for LeakLens.
+#
+# ONE service: the data-layer serves both the API and the dashboard, so
+# there is no second deploy, no CORS between them, and no deployed URL to
+# hardcode in the frontend.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo.
+# Then set GONKA_API_KEY in the service's Environment tab (it is marked
+# sync:false below precisely so it is never committed to the repo).
+
+services:
+  - type: web
+    name: leaklens
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+
+    buildCommand: npm install --prefix data-layer
+    startCommand: node data-layer/src/server.js
+
+    # Render pings this to decide the service is live. It answers without
+    # touching XposedOrNot or Gonka, so health checks cost no quota.
+    healthCheckPath: /health
+
+    envVars:
+      # The one secret. sync:false means Render prompts for it instead of
+      # reading it from this file - paste it in the Environment tab.
+      - key: GONKA_API_KEY
+        sync: false
+
+      - key: NODE_VERSION
+        value: "20"
+
+      - key: GONKA_BASE_URL
+        value: https://api.gonkarouter.io/v1
+
+      - key: GONKA_MODEL_PRIMARY
+        value: MiniMaxAI/MiniMax-M2.7
+      - key: GONKA_MODEL_SECONDARY
+        value: deepseek-ai/DeepSeek-V4-Flash-0731
+
+      # The router 429s above 8 concurrent requests per account, and each
+      # scan makes one call per model.
+      - key: GONKA_MAX_CONCURRENCY
+        value: "6"
+      - key: GONKA_TIMEOUT_MS
+        value: "120000"
+      - key: GONKA_MAX_TOKENS
+        value: "4000"
+
+      # Breaches sent to the models per scan. Higher is more thorough and
+      # slower; 3 keeps a live demo responsive.
+      - key: MAX_BREACHES_ANALYZED
+        value: "3"
+
+      # XposedOrNot allows only 25 requests/hour per IP, and on a shared
+      # host that IP is shared. A long cache is what keeps the demo alive.
+      - key: CACHE_TTL_MS
+        value: "900000"
+
+      # Our own public limit, per IP per 15 minutes. This is a public URL
+      # once deployed, so it protects the XON quota and the token credits
+      # from anyone who finds it.
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "60"
+      - key: RATE_LIMIT_MAX_ANALYSES
+        value: "20"
+
+      # Same-origin now that one service serves both, so no allowlist needed.
+      - key: CORS_ORIGINS
+        value: ""

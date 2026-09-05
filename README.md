@@ -245,6 +245,28 @@ Response shapes, error codes and the scoring rationale are documented in
 
 ---
 
+## Deploying (Render)
+
+One service serves both the API and the dashboard, so there is no second
+deploy, no CORS to configure, and no deployed URL to hardcode anywhere.
+
+1. Push to GitHub (already done if you are reading this on `main`).
+2. Render -> **New** -> **Blueprint** -> pick this repo. It reads
+   [`render.yaml`](render.yaml) and configures everything.
+3. It will prompt for **`GONKA_API_KEY`** - paste it there. That is the only
+   value not in the blueprint, deliberately: it must never be committed.
+4. Deploy. First build takes 2-3 minutes.
+
+Your demo URL is then `https://<service-name>.onrender.com`.
+
+**Free tier sleeps after 15 minutes idle**, and waking takes 30-60s on top
+of the model latency. Before judging, open the URL once to wake it, then run
+one scan to warm the cache - after that scans are near-instant.
+
+To change models or limits later, edit the service's Environment tab; every
+tunable is already listed there with a sensible default.
+
+
 ## Privacy
 
 This is a tool people hand their email address to, so the guarantees are

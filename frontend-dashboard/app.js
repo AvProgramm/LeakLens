@@ -2,8 +2,22 @@
    LeakLens Dashboard — app logic
    ============================================================ */
 
+/**
+ * Where the API lives. Resolved at runtime rather than hardcoded, so the
+ * same file works in all three places we run it:
+ *   - deployed: the data-layer serves this page, so same origin
+ *   - npm run dev:full: dashboard on 5173, API on 4000
+ *   - opened directly from disk: fall back to local API
+ */
+function resolveDataLayerBase() {
+  const { origin, port, protocol } = window.location;
+  if (protocol === "file:") return "http://localhost:4000";
+  if (port === "5173") return "http://localhost:4000";
+  return origin;
+}
+
 const CONFIG = {
-  DATA_LAYER_BASE: "http://localhost:4000",
+  DATA_LAYER_BASE: resolveDataLayerBase(),
 
   // Ceilings on how long we wait before giving up. The AI call runs two
   // reasoning models on a decentralized network and legitimately takes
