@@ -11,6 +11,7 @@
     "setup": "npm install --prefix data-layer",
     "start": "node scripts/dev.js",
     "dev": "node scripts/dev.js",
+    "dev:full": "node scripts/dev.js",
     "backend": "npm start --prefix data-layer",
     "test": "npm test --prefix data-layer",
     "verify-gonka": "npm run verify-gonka --prefix data-layer"
