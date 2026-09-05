@@ -461,3 +461,19 @@ h2 {
 }
 
 .status-unavailable { color: var(--coral); }
+
+/* Reveals the rest of a long breach list on demand. */
+.show-all-breaches {
+  margin-top: 12px;
+  width: 100%;
+  padding: 11px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--lens);
+  background: transparent;
+  border: 1px solid var(--lens-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.show-all-breaches:hover { background: rgba(217, 164, 65, 0.08); }

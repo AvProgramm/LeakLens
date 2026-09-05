@@ -91,6 +91,28 @@ function hideAll() {
   emptyState.hidden = true;
   cleanState.hidden = true;
   results.hidden = true;
+  clearAIPanel();
+}
+
+/**
+ * Wipe every trace of the previous scan's AI verdict. Without this, a scan
+ * whose analysis fails leaves the PREVIOUS email's model cards, reasoning
+ * and Gonka Request IDs on screen next to the new email's breach list -
+ * one person's verdict attributed to another person's address.
+ */
+function clearAIPanel() {
+  breachVerdictsEl.innerHTML = "";
+  coverageNoteEl.hidden = true;
+  coverageNoteEl.textContent = "";
+  modelsLineEl.hidden = true;
+  modelsLineEl.textContent = "";
+
+  leakScoreEl.textContent = "--";
+  leakScoreEl.className = "score-value";
+  scoreRingEl.className = "score-ring";
+  scoreLabelEl.textContent = "Waiting on Gonka analysis";
+  consensusStatusEl.textContent = "--";
+  consensusStatusEl.className = "consensus-value";
 }
 
 function showError(message) {
@@ -128,6 +150,11 @@ async function fetchBreachData(email) {
   return data;
 }
 
+// A widely-leaked address appears in hundreds of breaches. Rendering all of
+// them buries the Leak Score panel and makes the page sluggish, so we show
+// the biggest ones first and let the user expand the rest.
+const INITIAL_BREACHES_SHOWN = 20;
+
 function renderResults(data) {
   breachCountEl.textContent = data.breachCount;
 
@@ -137,10 +164,34 @@ function renderResults(data) {
   );
   recordsExposedEl.textContent = totalRecords.toLocaleString();
 
+  // Largest first, matching the order the AI layer judges them in - so the
+  // breaches the models actually assessed are the ones on screen.
+  const ordered = [...data.breaches].sort(
+    (a, b) => (b.recordsExposed || 0) - (a.recordsExposed || 0)
+  );
+
+  renderBreachList(ordered, INITIAL_BREACHES_SHOWN);
+}
+
+function renderBreachList(ordered, limit) {
   breachListEl.innerHTML = "";
-  data.breaches.forEach((breach) => {
-    breachListEl.appendChild(renderBreachItem(breach));
-  });
+
+  const fragment = document.createDocumentFragment();
+  ordered.slice(0, limit).forEach((breach) => fragment.appendChild(renderBreachItem(breach)));
+  breachListEl.appendChild(fragment);
+
+  const existingToggle = document.querySelector(".show-all-breaches");
+  if (existingToggle) existingToggle.remove();
+
+  const remaining = ordered.length - Math.min(limit, ordered.length);
+  if (remaining <= 0) return;
+
+  const showAll = document.createElement("button");
+  showAll.type = "button";
+  showAll.className = "show-all-breaches";
+  showAll.textContent = `Show all ${ordered.length} leaks (${remaining} more)`;
+  showAll.addEventListener("click", () => renderBreachList(ordered, ordered.length));
+  breachListEl.after(showAll);
 }
 
 function renderBreachItem(breach) {
@@ -241,16 +292,12 @@ function setAIStatus(state) {
 }
 
 function showAIUnavailable(message) {
+  // Clear first: a failed analysis must not leave the previous scan's
+  // verdicts and Request IDs sitting under the error message.
+  clearAIPanel();
   setAIStatus("unavailable");
   aiUnavailableMessageEl.textContent = message;
   scoreLabelEl.textContent = "No severity score available";
-
-  leakScoreEl.textContent = "--";
-  leakScoreEl.className = "score-value";
-  scoreRingEl.className = "score-ring";
-
-  consensusStatusEl.textContent = "--";
-  consensusStatusEl.className = "consensus-value";
 }
 
 function scoreTier(score) {
