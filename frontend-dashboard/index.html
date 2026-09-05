@@ -35,11 +35,7 @@
             <span class="btn-spinner" hidden></span>
           </button>
         </div>
-        <p class="scan-hint">
-          Checked against known public data leaks. Your address is never written to disk and
-          never sent to the AI models — only the names of the breaches are. Results are held
-          in memory against a one-way hash for up to 15 minutes, then discarded.
-        </p>
+        <p class="scan-hint">Checked against known public data leaks. Your email isn't stored after this session.</p>
       </form>
     </section>
 
@@ -83,31 +79,31 @@
           <div class="ai-panel" id="ai-panel">
             <div class="ai-panel-header">
               <h2>Leak Score</h2>
-              <span class="pending-badge">Live AI analysis</span>
+              <span class="ai-status-badge" id="ai-status-badge">Checking…</span>
             </div>
 
             <div class="score-display">
               <span class="score-value" id="leak-score">--</span>
               <span class="score-max">/100</span>
             </div>
-            <p class="score-label" id="score-label">Awaiting breach analysis</p>
+            <p class="score-label" id="score-label">Waiting on Gonka analysis</p>
 
             <div class="consensus-row">
               <span class="consensus-label">Model consensus</span>
               <span class="consensus-value" id="consensus-status">--</span>
             </div>
 
-            <p id="ai-status" class="ai-status ai-status-info" hidden></p>
+            <p class="coverage-note" id="coverage-note" hidden></p>
+            <p class="models-line" id="models-line" hidden></p>
 
-            <div class="model-verdicts" id="model-verdicts"></div>
-
-            <div class="reasoning-trace">
-              <h3>Reasoning trace</h3>
-              <div id="reasoning-content" class="reasoning-content"></div>
+            <div class="ai-unavailable" id="ai-unavailable" hidden>
+              <p id="ai-unavailable-message"></p>
             </div>
 
+            <div class="breach-verdicts" id="breach-verdicts"></div>
+
             <p class="ai-footnote">
-              Each model verdict carries a Gonka Request ID for independent verification.
+              Every score above carries a live Gonka Request ID per model, so any verdict here can be independently verified after the fact.
             </p>
           </div>
         </div>

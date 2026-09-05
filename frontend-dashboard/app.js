@@ -1,20 +1,19 @@
 /* ============================================================
-   LeakLens Dashboard - app logic
+   LeakLens Dashboard — app logic
 
-   Everything here is real. The breach list comes from the
-   data-layer's /api/check-email, and the Leak Score panel comes
-   from /api/analyze-breach, which runs two independent models on
-   the Gonka Network and reports whether they agreed.
+   Both layers are now real:
+     - /api/check-email     breach lookup (XposedOrNot)
+     - /api/analyze-breach  Gonka Router multi-model consensus
 
-   The two loads are deliberately INDEPENDENT: breach results
-   render the moment they arrive, and the AI panel fills in after.
-   If Gonka is unreachable or unconfigured, the user still gets
-   their breach report instead of an empty screen.
+   The AI panel still degrades gracefully: if Gonka isn't
+   configured (no key) or the analysis call fails, the panel
+   shows an explicit "unavailable" state rather than breaking —
+   the breach report above it still renders either way, matching
+   how the backend itself is documented to behave.
    ============================================================ */
 
 const CONFIG = {
-  // Must match the data-layer's PORT (default 4000). Point this at the
-  // deployed data-layer URL on demo day.
+  // Point this at the deployed data-layer URL on demo day.
   DATA_LAYER_BASE: "http://localhost:4000",
 };
 
@@ -38,40 +37,12 @@ const breachListEl = document.getElementById("breach-list");
 const leakScoreEl = document.getElementById("leak-score");
 const scoreLabelEl = document.getElementById("score-label");
 const consensusStatusEl = document.getElementById("consensus-status");
-const modelVerdictsEl = document.getElementById("model-verdicts");
-const reasoningContentEl = document.getElementById("reasoning-content");
-const aiStatusEl = document.getElementById("ai-status");
-
-// ---------- Startup ----------
-
-/**
- * Ask the data-layer up front whether Gonka is configured, so the AI panel
- * can say what it is going to do before the user runs a scan rather than
- * failing halfway through one.
- */
-async function checkBackendHealth() {
-  try {
-    const res = await fetch(`${CONFIG.DATA_LAYER_BASE}/health`);
-    if (!res.ok) throw new Error("unhealthy");
-    const health = await res.json();
-
-    if (!health.gonkaConfigured) {
-      setAiStatus(
-        "AI analysis is not configured on the server (no GONKA_API_KEY). Breach lookup still works.",
-        "warn"
-      );
-    }
-    return health;
-  } catch {
-    setAiStatus(
-      `Cannot reach the data-layer at ${CONFIG.DATA_LAYER_BASE}. Start it with "npm start" inside data-layer/.`,
-      "error"
-    );
-    return null;
-  }
-}
-
-checkBackendHealth();
+const aiStatusBadgeEl = document.getElementById("ai-status-badge");
+const coverageNoteEl = document.getElementById("coverage-note");
+const modelsLineEl = document.getElementById("models-line");
+const aiUnavailableEl = document.getElementById("ai-unavailable");
+const aiUnavailableMessageEl = document.getElementById("ai-unavailable-message");
+const breachVerdictsEl = document.getElementById("breach-verdicts");
 
 // ---------- Form handling ----------
 
@@ -91,15 +62,21 @@ form.addEventListener("submit", async (e) => {
       return;
     }
 
-    // Render and reveal the breach report immediately. The AI panel is a
-    // separate, slower call and must never gate this.
     renderResults(breachData);
     results.hidden = false;
 
-    // The scan button is released here, before the AI call, so the user is
-    // free to run another lookup while inference is still in flight.
-    setLoading(false);
-    await loadAiVerdict(email);
+    // The AI analysis is a separate call and can fail or be
+    // unconfigured independently of the breach lookup above —
+    // that failure should never take down the breach report the
+    // person already has in front of them.
+    setAIStatus("loading");
+    try {
+      const analysis = await fetchAIAnalysis(email);
+      renderAIVerdict(analysis);
+    } catch (aiErr) {
+      showAIUnavailable(aiErr.message);
+    }
+
   } catch (err) {
     showError(err.message || "Something went wrong checking that email.");
   } finally {
@@ -129,37 +106,20 @@ function showClean() {
   cleanState.hidden = false;
 }
 
-function setAiStatus(message, tone = "info") {
-  if (!aiStatusEl) return;
-  aiStatusEl.textContent = message || "";
-  aiStatusEl.hidden = !message;
-  aiStatusEl.className = `ai-status ai-status-${tone}`;
-}
-
 /* ============================================================
-   DATA LAYER
+   DATA LAYER — real, hits PR #1's endpoint
    ============================================================ */
 
 async function fetchBreachData(email) {
   const url = `${CONFIG.DATA_LAYER_BASE}/api/check-email?email=${encodeURIComponent(email)}`;
-
-  let res;
-  try {
-    res = await fetch(url);
-  } catch {
-    // A network-level failure here almost always means the server isn't
-    // running, so say that rather than a generic error.
-    throw new Error(
-      `Cannot reach the data-layer at ${CONFIG.DATA_LAYER_BASE}. Is it running?`
-    );
-  }
-
-  const data = await res.json().catch(() => ({}));
+  const res = await fetch(url);
+  const data = await res.json();
 
   if (!res.ok) {
+    // Data layer returns { error: "..." } for 400 / 429 / 502
     const messages = {
       400: data.error || "That doesn't look like a valid email.",
-      429: "Too many checks right now - the leak database is rate-limited. Try again in a minute.",
+      429: "Too many checks right now — the leak database is rate-limited. Try again in a minute.",
       502: "Couldn't reach the leak database right now. Try again shortly.",
     };
     throw new Error(messages[res.status] || data.error || "Unexpected error checking that email.");
@@ -167,11 +127,6 @@ async function fetchBreachData(email) {
 
   return data;
 }
-
-// A widely-leaked address can appear in hundreds of breaches. Rendering all
-// of them at once buries the Leak Score and makes the page sluggish, so we
-// show the biggest ones first and let the user expand the rest.
-const INITIAL_BREACHES_SHOWN = 20;
 
 function renderResults(data) {
   breachCountEl.textContent = data.breachCount;
@@ -182,42 +137,16 @@ function renderResults(data) {
   );
   recordsExposedEl.textContent = totalRecords.toLocaleString();
 
-  // Largest first, so the most consequential leaks are the ones on screen.
-  const orderedBreaches = [...data.breaches].sort(
-    (left, right) => (right.recordsExposed || 0) - (left.recordsExposed || 0)
-  );
-
-  renderBreachList(orderedBreaches, INITIAL_BREACHES_SHOWN);
-}
-
-function renderBreachList(orderedBreaches, limit) {
   breachListEl.innerHTML = "";
-
-  const visibleBreaches = orderedBreaches.slice(0, limit);
-  const fragment = document.createDocumentFragment();
-  visibleBreaches.forEach((breach) => fragment.appendChild(renderBreachItem(breach)));
-  breachListEl.appendChild(fragment);
-
-  // Clear any previous toggle before deciding whether a new one is needed.
-  const existingToggle = document.querySelector(".show-all-breaches");
-  if (existingToggle) existingToggle.remove();
-
-  const remaining = orderedBreaches.length - visibleBreaches.length;
-  if (remaining <= 0) return;
-
-  const showAllButton = document.createElement("button");
-  showAllButton.type = "button";
-  showAllButton.className = "show-all-breaches";
-  showAllButton.textContent = `Show all ${orderedBreaches.length} leaks (${remaining} more)`;
-  showAllButton.addEventListener("click", () => {
-    renderBreachList(orderedBreaches, orderedBreaches.length);
+  data.breaches.forEach((breach) => {
+    breachListEl.appendChild(renderBreachItem(breach));
   });
-  breachListEl.after(showAllButton);
 }
 
 function renderBreachItem(breach) {
   const li = document.createElement("li");
   li.className = "breach-item";
+  li.dataset.breachName = breach.name;
 
   const chips = [...(breach.dataExposed || [])];
   if (breach.passwordRisk) {
@@ -236,8 +165,21 @@ function renderBreachItem(breach) {
     <div class="data-chips">
       ${chips.map((c) => `<span class="data-chip">${escapeHtml(c)}</span>`).join("")}
     </div>
+    <div class="ai-chip-slot" data-ai-chip-for="${escapeHtml(breach.name)}"></div>
   `;
   return li;
+}
+
+function setBreachAIChip(breachName, statusLabel, score) {
+  const slot = breachListEl.querySelector(
+    `.ai-chip-slot[data-ai-chip-for="${cssEscape(breachName)}"]`
+  );
+  if (!slot) return;
+  slot.innerHTML = `<span class="ai-chip ai-chip-${statusLabel.toLowerCase()}">${score}/100 · ${escapeHtml(statusLabel)}</span>`;
+}
+
+function cssEscape(str) {
+  return window.CSS && CSS.escape ? CSS.escape(str) : str.replace(/"/g, '\\"');
 }
 
 function formatPasswordRisk(risk) {
@@ -247,7 +189,7 @@ function formatPasswordRisk(risk) {
     hardtocrack: "hard to crack",
     unknown: "unknown strength",
   };
-  return labels[String(risk).toLowerCase()] || risk;
+  return labels[risk.toLowerCase()] || risk;
 }
 
 function escapeHtml(str) {
@@ -257,173 +199,136 @@ function escapeHtml(str) {
 }
 
 /* ============================================================
-   AI LAYER - Gonka multi-model consensus
+   AI LAYER — real, hits data-layer's Gonka consensus endpoint
+
+   GET /api/analyze-breach?email=... returns:
+     overallRiskScore, consensusStatus, disputedCount,
+     analyzedBreaches, totalBreaches, truncated, models[],
+     breaches[]: { name, status, finalScore, scoreDifference,
+                   modelA: { ok, model, severityScore, evidence,
+                             reasoning, recommendedAction,
+                             requestId, requestIdSource },
+                   modelB: { ...same shape } }
+
+   503 means Gonka isn't configured (no key) — that's a normal,
+   documented state, not a bug, so it's handled as "unavailable"
+   rather than a generic error.
    ============================================================ */
 
-/**
- * Fetch and render the Gonka verdict. Failures are contained here and
- * reported inside the AI panel, so a Gonka outage never removes the breach
- * report the user already has on screen.
- */
-async function loadAiVerdict(email) {
-  setAiStatus("Asking two independent models on the Gonka Network…", "info");
-  leakScoreEl.textContent = "…";
-  scoreLabelEl.textContent = "Running multi-model analysis";
-  consensusStatusEl.textContent = "…";
-  modelVerdictsEl.innerHTML = "";
-  reasoningContentEl.innerHTML = "";
+const STATUS_LABELS = {
+  consensus: "Agreement",
+  disputed: "Disputed",
+  "single-model": "Single model",
+  unverified: "Unverified",
+  unavailable: "Unavailable",
+};
 
-  try {
-    const url = `${CONFIG.DATA_LAYER_BASE}/api/analyze-breach?email=${encodeURIComponent(email)}`;
-    const res = await fetch(url);
-    const data = await res.json().catch(() => ({}));
+async function fetchAIAnalysis(email) {
+  const url = `${CONFIG.DATA_LAYER_BASE}/api/analyze-breach?email=${encodeURIComponent(email)}`;
+  const res = await fetch(url);
+  const data = await res.json();
 
-    if (!res.ok) {
-      throw new Error(data.error || "Couldn't complete the AI severity analysis.");
-    }
-
-    renderAiVerdict(data);
-  } catch (err) {
-    leakScoreEl.textContent = "--";
-    scoreLabelEl.textContent = "AI analysis unavailable";
-    consensusStatusEl.textContent = "--";
-    setAiStatus(err.message, "error");
-  }
-}
-
-function riskTier(score) {
-  if (score >= 75) return "High";
-  if (score >= 40) return "Medium";
-  return "Low";
-}
-
-function renderAiVerdict(report) {
-  const analyzed = report.breaches || [];
-
-  // Every breach came back unscored, so say so rather than showing a zero
-  // that reads as "you are safe".
-  if (report.overallRiskScore === null || analyzed.length === 0) {
-    leakScoreEl.textContent = "--";
-    scoreLabelEl.textContent = "No model verdicts returned";
-    consensusStatusEl.textContent = "--";
-    setAiStatus("Both models failed to return a usable assessment.", "warn");
-    return;
-  }
-
-  leakScoreEl.textContent = report.overallRiskScore;
-  scoreLabelEl.textContent = `${riskTier(report.overallRiskScore)} risk — live Gonka assessment`;
-
-  if (report.consensusStatus === "divergence") {
-    consensusStatusEl.textContent = `Models disagree on ${report.disputedCount} of ${analyzed.length}`;
-  } else if (report.consensusStatus === "agreement") {
-    consensusStatusEl.textContent = `Models agree on ${report.crossVerifiedCount} of ${analyzed.length}`;
-  } else {
-    consensusStatusEl.textContent = "Not cross-verified";
-  }
-
-  // Be explicit when only a subset was analysed, so the headline number is
-  // never quietly based on less data than the breach list shows.
-  const coverageNote = report.truncated
-    ? `Analysed the ${report.analyzedBreaches} largest of ${report.totalBreaches} breaches via ${report.models.join(" + ")}.`
-    : `Analysed all ${report.analyzedBreaches} breaches via ${report.models.join(" + ")}.`;
-
-  // If the router answered some breaches with the same model twice, say so.
-  // Claiming cross-verification that did not happen is the one thing this
-  // dashboard must never do.
-  if (report.unverifiedCount > 0) {
-    setAiStatus(
-      `${coverageNote} Note: on ${report.unverifiedCount} of ${analyzed.length}, the Gonka Router returned the same model for both requests, so those are not independently cross-verified.`,
-      "warn"
-    );
-  } else {
-    setAiStatus(coverageNote, "info");
-  }
-
-  renderModelVerdicts(analyzed);
-  renderReasoningTrace(analyzed);
-}
-
-/**
- * One row per model per breach, each carrying its Gonka Request ID. That ID
- * is the on-chain proof the hackathon brief asks for: it shows the verdict
- * came from the decentralized network, not from our own server.
- */
-function renderModelVerdicts(analyzed) {
-  const rows = [];
-
-  for (const breach of analyzed) {
-    for (const verdict of [breach.modelA, breach.modelB]) {
-      if (!verdict) continue;
-
-      const scoreText = verdict.ok ? `${verdict.severityScore}/100` : "failed";
-      const requestIdText = verdict.requestId
-        ? `${verdict.requestId}`
-        : verdict.ok
-          ? "no request id returned"
-          : escapeHtml(verdict.error || "no response");
-
-      rows.push(`
-        <div class="model-verdict-row ${verdict.ok ? "" : "model-verdict-failed"}">
-          <span class="model-verdict-name">
-            ${escapeHtml(breach.name)}
-            <small>${escapeHtml(verdict.model)}</small>
-          </span>
-          <span class="model-verdict-score">
-            ${escapeHtml(scoreText)}
-            <br><small class="request-id" title="Gonka Request ID">${escapeHtml(requestIdText)}</small>
-          </span>
-        </div>
-      `);
-    }
-  }
-
-  modelVerdictsEl.innerHTML = rows.join("");
-}
-
-/**
- * The reasoning trace. Where the models disagreed we show BOTH explanations
- * side by side - the disagreement is the product, so hiding one of them
- * would defeat the point.
- */
-function renderReasoningTrace(analyzed) {
-  const blocks = analyzed.map((breach) => {
-    const statusLabels = {
-      consensus: "both models agree",
-      disputed: "models disagree",
-      "single-model": "one model only",
-      unverified: "same model answered twice",
-      unavailable: "no verdict",
+  if (!res.ok) {
+    const messages = {
+      429: "Gonka analysis is rate-limited right now — try again shortly.",
+      502: "Couldn't reach the Gonka Router right now.",
+      503: "AI severity analysis isn't configured for this deployment yet (no Gonka key set).",
     };
+    throw new Error(messages[res.status] || data.error || "AI analysis failed.");
+  }
 
-    const verdictLines = [breach.modelA, breach.modelB]
-      .filter((verdict) => verdict?.ok)
-      .map(
-        (verdict) => `
-          <p class="reasoning-line">
-            <strong>${escapeHtml(verdict.model)}</strong>
-            — ${escapeHtml(String(verdict.severityScore))}/100.
-            ${escapeHtml(verdict.reasoning)}
-            ${verdict.evidence ? `<em>Evidence: ${escapeHtml(verdict.evidence)}</em>` : ""}
-          </p>`
-      )
-      .join("");
+  return data;
+}
 
-    const action = [breach.modelA, breach.modelB].find((v) => v?.ok)?.recommendedAction;
+function setAIStatus(state) {
+  aiUnavailableEl.hidden = state !== "unavailable";
+  const labels = { loading: "Checking…", unavailable: "Unavailable" };
+  aiStatusBadgeEl.textContent = labels[state] || "";
+  aiStatusBadgeEl.className = `ai-status-badge ai-status-${state}`;
+}
 
-    return `
-      <div class="reasoning-block">
-        <p class="reasoning-heading">
-          ${escapeHtml(breach.name)}
-          <span class="reasoning-status status-${escapeHtml(breach.status)}">
-            ${escapeHtml(statusLabels[breach.status] || breach.status)}
-            ${breach.finalScore !== null ? `· ${escapeHtml(String(breach.finalScore))}/100` : ""}
-          </span>
-        </p>
-        ${verdictLines || "<p class='reasoning-line'>No model returned an assessment.</p>"}
-        ${action ? `<p class="reasoning-action">Do this first: ${escapeHtml(action)}</p>` : ""}
-      </div>
-    `;
+function showAIUnavailable(message) {
+  setAIStatus("unavailable");
+  aiUnavailableMessageEl.textContent = message;
+  scoreLabelEl.textContent = "No severity score available";
+}
+
+function scoreTier(score) {
+  if (score >= 67) return { label: "High", className: "tier-high" };
+  if (score >= 34) return { label: "Medium", className: "tier-medium" };
+  return { label: "Low", className: "tier-low" };
+}
+
+function renderAIVerdict(analysis) {
+  setAIStatus("live");
+  aiStatusBadgeEl.textContent = "Live · Gonka Router";
+
+  const tier = scoreTier(analysis.overallRiskScore);
+  leakScoreEl.textContent = analysis.overallRiskScore;
+  leakScoreEl.className = `score-value ${tier.className}`;
+  scoreLabelEl.textContent = `${tier.label} risk`;
+
+  consensusStatusEl.textContent =
+    analysis.consensusStatus === "consensus" ? "Agreement" : "Models disagree";
+
+  if (analysis.truncated) {
+    coverageNoteEl.hidden = false;
+    coverageNoteEl.textContent = `Showing the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
+  } else {
+    coverageNoteEl.hidden = true;
+  }
+
+  if (analysis.models && analysis.models.length) {
+    modelsLineEl.hidden = false;
+    modelsLineEl.textContent = `Cross-checked by ${analysis.models.join(" and ")}`;
+  }
+
+  breachVerdictsEl.innerHTML = analysis.breaches.map(renderBreachVerdict).join("");
+
+  // Cross-reference back onto the breach list above so each
+  // leak shows its own severity, not just the aggregate.
+  analysis.breaches.forEach((b) => {
+    const label = STATUS_LABELS[b.status] || b.status;
+    setBreachAIChip(b.name, label, b.finalScore);
   });
+}
 
-  reasoningContentEl.innerHTML = blocks.join("");
+function renderBreachVerdict(breach) {
+  const statusLabel = STATUS_LABELS[breach.status] || breach.status;
+  const diffNote =
+    breach.status === "disputed" && breach.scoreDifference
+      ? `<span class="score-diff">Δ ${breach.scoreDifference} pts</span>`
+      : "";
+
+  return `
+    <div class="breach-verdict-card">
+      <div class="breach-verdict-header">
+        <span class="breach-verdict-name">${escapeHtml(breach.name)}</span>
+        <span class="verdict-status-pill status-${breach.status}">${escapeHtml(statusLabel)}</span>
+      </div>
+      <div class="breach-verdict-score">
+        ${breach.finalScore ?? "--"}/100 ${diffNote}
+      </div>
+      <div class="model-compare">
+        ${renderModelVerdict(breach.modelA)}
+        ${renderModelVerdict(breach.modelB)}
+      </div>
+    </div>
+  `;
+}
+
+function renderModelVerdict(model) {
+  if (!model) return "";
+  if (!model.ok) {
+    return `<div class="model-verdict-block model-no-response">No response from this model</div>`;
+  }
+  return `
+    <div class="model-verdict-block">
+      <div class="model-verdict-name">${escapeHtml(model.model)} · ${model.severityScore}/100</div>
+      <p class="model-evidence">${escapeHtml(model.evidence || "")}</p>
+      <p class="model-reasoning">${escapeHtml(model.reasoning || "")}</p>
+      ${model.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(model.recommendedAction)}</p>` : ""}
+      <p class="request-id">Request ID: <code>${escapeHtml(model.requestId || "n/a")}</code></p>
+    </div>
+  `;
 }

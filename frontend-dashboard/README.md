@@ -1,61 +1,35 @@
 # dashboard
 
-Frontend for LeakLens. Plain HTML/CSS/JS, no build step, no framework — fast
-to run and easy for everyone on the team to edit directly.
+Frontend for LeakLens. Plain HTML/CSS/JS, no build step, no framework — fast to run and easy for everyone on the team to edit directly.
 
 ## Run it
 
-Start the data-layer first (`npm start` inside `data-layer/`, serves
-`http://localhost:4000`), then serve this folder with any static server.
-Opening `index.html` directly over `file://` can hit CORS issues in some
-browsers.
+The data-layer server needs to be running first (`npm start` inside `data-layer/`, serves `http://localhost:4000`).
+
+Then serve this folder with any static server, opening `index.html` directly via `file://` can hit CORS issues in some browsers:
 
 ```bash
-cd frontend-dashboard
+cd dashboard
 npx serve .
 # or: python3 -m http.server 5173
 ```
 
-If the dashboard cannot reach the backend it says so explicitly, naming the
-URL it tried — the usual cause is the data-layer not running.
+## What this hits
 
-## Configuration
+- `GET /api/check-email` — breach lookup (XposedOrNot), powers the breach list.
+- `GET /api/analyze-breach` — Gonka Router multi-model consensus, powers the Leak Score panel and the per-breach AI verdict cards.
 
-One value, at the top of `app.js`:
+Both are real now. If Gonka isn't configured on the server (no key set), the panel shows an explicit "Unavailable" state rather than breaking, the breach report above it still renders regardless.
 
-```js
-const CONFIG = { DATA_LAYER_BASE: "http://localhost:4000" };
-```
+## What the AI panel shows
 
-This **must match the data-layer's `PORT`** (default 4000). Point it at the
-deployed data-layer URL on demo day.
-
-## What it shows
-
-- **Breach report** — count, total records, and a card per leak with year,
-  industry, records exposed, data classes and password storage. Sorted
-  largest-first; the first 20 render with a "show all" toggle.
-- **Leak Score panel** — the 0-100 score from the Gonka multi-model
-  consensus, whether the two models agreed, a per-model verdict row carrying
-  its **Gonka Request ID**, and a reasoning trace showing *both* models'
-  explanations and evidence.
-
-Colour carries the consensus state: green where the models agree, amber
-where they disagree. Disagreement is a headline feature of this product, not
-an error, and is styled that way.
-
-## Load order
-
-The two fetches are deliberately independent. The breach report renders and
-is revealed the moment it arrives; the slower AI call fills in afterwards.
-If Gonka is unreachable, unconfigured, or rate-limited, the user still keeps
-their full breach report and the AI panel explains why it is empty.
-
-On page load the dashboard also calls `/health`, so it can say up front that
-AI analysis is unconfigured rather than failing halfway through a scan.
+- Overall Leak Score (0–100) and a Low/Medium/High tier.
+- Consensus status (agreement vs. disagreement) and, if the analysis only covered the largest N breaches, a note saying so.
+- Per-breach verdict cards: both models' severity score, evidence, reasoning, and recommended action side by side, plus each model's Gonka Request ID, so any verdict here can be checked against the network afterward.
+- A matching severity chip injected back onto each breach in the list above, so a leak's risk is visible in both places.
 
 ## Files
 
 - `index.html` — page structure
 - `style.css` — all styling, theme tokens at the top of the file
-- `app.js` — data-layer and Gonka analysis fetches, rendering
+- `app.js` — data-layer fetch (real) + AI-layer mock (placeholder), see comments inside
