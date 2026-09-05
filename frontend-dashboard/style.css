@@ -1,11 +1,11 @@
 /* ============================================================
    LeakLens Dashboard — design tokens
 
-   Concept: clarity through a lens. Both layers are live, so both
-   render in full confidence. Within the AI panel, colour carries
-   the consensus state: green where the two Gonka models agree,
-   amber where they disagree. Disagreement is a headline feature
-   of this product, not an error, and is styled that way.
+   Concept: clarity through a lens. The real data (leaks found)
+   renders in full colour and full confidence. The AI/Gonka
+   layer, not yet wired up, renders in a distinct "unfocused"
+   visual state — dashed edges, muted tone — so it reads as
+   genuinely pending rather than broken or fake.
    ============================================================ */
 
 :root {
@@ -32,13 +32,6 @@
 }
 
 * { box-sizing: border-box; }
-
-/* The `hidden` attribute only sets `display: none` from the browser's own
-   stylesheet, which ANY author `display` rule outranks. Several panels here
-   set display:flex, so without this they stayed visible after being hidden
-   in JS - the clean-state "no leaks found" message rendered on top of a
-   full result list. This makes the attribute authoritative everywhere. */
-[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -223,39 +216,6 @@ body {
   align-items: start;
 }
 
-/* A heavily-breached email produces a very long list on the left. Pinning
-   the AI column keeps the Leak Score, consensus state and Request IDs on
-   screen while the user scrolls that list - without this, the headline
-   result scrolls away and a demo has to scroll back up to show it. */
-.ai-column {
-  position: sticky;
-  top: 20px;
-  align-self: start;
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
-}
-
-@media (max-width: 860px) {
-  .split { grid-template-columns: 1fr; }
-  .ai-column { position: static; max-height: none; }
-}
-
-/* Reveals the rest of a long breach list on demand. */
-.show-all-breaches {
-  margin-top: 12px;
-  width: 100%;
-  padding: 10px;
-  font-family: var(--font-body);
-  font-size: 13px;
-  color: var(--lens);
-  background: transparent;
-  border: 1px solid var(--lens-dim);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.show-all-breaches:hover { background: rgba(79, 209, 197, 0.08); }
-
 @media (max-width: 720px) {
   .split { grid-template-columns: 1fr; }
 }
@@ -348,13 +308,11 @@ h2 {
   padding: 3px 10px;
 }
 
-/* ---------- AI panel (placeholder state) ---------- */
+/* ---------- AI panel ---------- */
 
-/* Solid, lens-toned border: the AI layer is live, so it should read with
-   the same confidence as the breach data rather than as a placeholder. */
 .ai-panel {
   background: var(--surface);
-  border: 1px solid var(--lens-dim);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 24px;
   position: relative;
@@ -369,15 +327,184 @@ h2 {
 
 .ai-panel-header h2 { margin-bottom: 0; }
 
-.pending-badge {
+.ai-status-badge {
   font-size: 11px;
-  color: var(--lens);
-  background: rgba(79, 209, 197, 0.12);
-  border: 1px solid rgba(79, 209, 197, 0.35);
   border-radius: 999px;
   padding: 4px 10px;
   white-space: nowrap;
 }
+
+.ai-status-loading {
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+}
+
+.ai-status-unavailable {
+  color: var(--amber);
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+}
+
+.ai-status-live {
+  color: var(--lens);
+  background: rgba(79, 209, 197, 0.12);
+  border: 1px solid rgba(79, 209, 197, 0.4);
+}
+
+.score-value.tier-low { color: var(--green); }
+.score-value.tier-medium { color: var(--amber); }
+.score-value.tier-high { color: var(--coral); }
+
+.coverage-note, .models-line {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 10px 0 0;
+}
+
+.ai-unavailable {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 166, 35, 0.08);
+  border: 1px solid rgba(245, 166, 35, 0.3);
+  font-size: 13px;
+  color: #E0B168;
+}
+
+/* ---------- Per-breach AI verdict cards ---------- */
+
+.breach-verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.breach-verdict-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.breach-verdict-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.breach-verdict-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.verdict-status-pill {
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.status-consensus { color: var(--green); background: rgba(111,207,151,0.12); }
+.status-disputed { color: var(--coral); background: rgba(232,93,93,0.12); }
+.status-single-model, .status-unverified { color: var(--amber); background: rgba(245,166,35,0.12); }
+.status-unavailable { color: var(--text-tertiary); background: var(--surface); }
+
+.breach-verdict-score {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  margin-top: 8px;
+  color: var(--text-primary);
+}
+
+.score-diff {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--coral);
+  font-weight: 500;
+  margin-left: 6px;
+}
+
+.model-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (max-width: 520px) {
+  .model-compare { grid-template-columns: 1fr; }
+}
+
+.model-verdict-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.model-no-response {
+  color: var(--text-tertiary);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+}
+
+.model-verdict-name {
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.model-evidence {
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.model-reasoning {
+  color: var(--text-tertiary);
+  margin: 0 0 6px;
+}
+
+.model-action {
+  color: var(--text-secondary);
+  margin: 0 0 6px;
+}
+
+.request-id {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.request-id code {
+  color: var(--lens);
+  background: var(--ink);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ---------- Per-breach AI chip (in the breach list) ---------- */
+
+.ai-chip-slot { margin-top: 8px; }
+
+.ai-chip {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.ai-chip-agreement { color: var(--green); border-color: rgba(111,207,151,0.35); }
+.ai-chip-disputed { color: var(--coral); border-color: rgba(232,93,93,0.35); }
+.ai-chip-single { color: var(--amber); border-color: rgba(245,166,35,0.35); }
+.ai-chip-unverified { color: var(--amber); border-color: rgba(245,166,35,0.35); }
+.ai-chip-unavailable { color: var(--text-tertiary); }
 
 .score-display {
   display: flex;
@@ -417,147 +544,6 @@ h2 {
 
 .consensus-label { color: var(--text-secondary); }
 .consensus-value { color: var(--text-tertiary); font-weight: 600; }
-
-.model-verdicts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.model-verdict-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  color: var(--text-tertiary);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-}
-
-/* A model that failed is dimmed and marked, never silently omitted - the
-   user should be able to see that only one of the two models answered. */
-.model-verdict-failed {
-  border-color: rgba(232, 93, 93, 0.35);
-  opacity: 0.75;
-}
-
-.model-verdict-name {
-  color: var(--text-secondary);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.model-verdict-name small { color: var(--text-tertiary); font-size: 11px; }
-
-.model-verdict-score { text-align: right; white-space: nowrap; }
-
-/* The Gonka Request ID is the transparency claim made visible, so it gets
-   a monospace treatment and is selectable for judges to copy and check. */
-.request-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
-  color: var(--lens-dim);
-  user-select: all;
-  word-break: break-all;
-}
-
-/* Status line under the consensus row: what the AI layer is doing, or why
-   it could not run. Tone is carried by colour as well as wording. */
-.ai-status {
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 12px 0 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-}
-
-.ai-status-info {
-  color: var(--text-secondary);
-  background: rgba(79, 209, 197, 0.07);
-  border-color: rgba(79, 209, 197, 0.2);
-}
-
-.ai-status-warn {
-  color: var(--amber);
-  background: rgba(245, 166, 35, 0.08);
-  border-color: rgba(245, 166, 35, 0.28);
-}
-
-.ai-status-error {
-  color: var(--coral);
-  background: rgba(232, 93, 93, 0.08);
-  border-color: rgba(232, 93, 93, 0.28);
-}
-
-.reasoning-trace {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.reasoning-trace h3 {
-  font-family: var(--font-body);
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--text-secondary);
-  margin: 0 0 10px;
-}
-
-.reasoning-block {
-  margin-bottom: 14px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.reasoning-block:last-child { border-bottom: none; margin-bottom: 0; }
-
-.reasoning-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 6px;
-}
-
-.reasoning-status {
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
-  color: var(--text-tertiary);
-}
-
-/* Disagreement is the headline feature, so it is coloured to stand out
-   rather than tucked away as an error state. */
-.status-disputed { color: var(--amber); }
-.status-consensus { color: var(--green); }
-.status-single-model { color: var(--text-secondary); }
-.status-unverified { color: var(--amber); }
-.status-unavailable { color: var(--coral); }
-
-.reasoning-line {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin: 0 0 6px;
-  line-height: 1.6;
-}
-
-.reasoning-line strong { color: var(--text-secondary); font-weight: 600; }
-.reasoning-line em { display: block; color: var(--lens-dim); font-size: 11px; margin-top: 2px; }
-
-.reasoning-action {
-  font-size: 12px;
-  color: var(--lens);
-  margin: 6px 0 0;
-  line-height: 1.5;
-}
 
 .ai-footnote {
   margin: 20px 0 0;
