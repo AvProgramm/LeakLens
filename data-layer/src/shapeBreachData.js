@@ -28,26 +28,28 @@
  * key, then simplify this function.
  */
 
+// Confirmed live shape: BreachMetrics.risk is a 1-element array:
+// [{ risk_label: "Low", risk_score: 23 }]. XON's own score is 0-100,
+// not 0-10 — matches the AI layer's 0-100% scale, convenient.
 function getRiskScore(breachMetrics, breachCount) {
-  if (breachMetrics) {
-    const candidate =
-      breachMetrics.risk?.risk_score ??
-      breachMetrics.risk_score ??
-      breachMetrics.risk;
-    if (typeof candidate === 'number') return candidate;
-  }
-  // Fallback heuristic so the field is never missing: 0 breaches -> 0,
-  // otherwise scale with count, capped at 10. This is a placeholder —
-  // the AI scoring team's severity model should supersede this, this
-  // is just so `riskScore` is never undefined for downstream code.
+  const entry = breachMetrics?.risk?.[0];
+  if (entry && typeof entry.risk_score === 'number') return entry.risk_score;
+
+  // Fallback heuristic only used if XON ever omits risk (shouldn't
+  // happen based on live testing, but keeps the field non-null).
   if (!breachCount) return 0;
-  return Math.min(10, breachCount * 2);
+  return Math.min(100, breachCount * 20);
 }
 
-function riskLabel(score) {
+// Prefer XON's own label when present so it stays consistent with
+// their score; only compute our own label for the fallback path.
+function riskLabel(score, breachMetrics) {
+  const xonLabel = breachMetrics?.risk?.[0]?.risk_label;
+  if (xonLabel) return xonLabel;
+
   if (score === 0) return 'None';
-  if (score <= 3) return 'Low';
-  if (score <= 6) return 'Medium';
+  if (score <= 30) return 'Low';
+  if (score <= 60) return 'Medium';
   return 'High';
 }
 
@@ -68,32 +70,29 @@ function normalizeBreachDetail(detail) {
   };
 }
 
-// passwords_strength from XON comes as an array of [label, count] pairs
-// in an order that isn't formally documented. We map by label text so
-// this doesn't silently break if the order changes.
-function normalizePasswordStrength(pairs) {
-  const out = { strongHash: 0, easyToCrack: 0, plainText: 0, unknown: 0 };
-  if (!Array.isArray(pairs)) return out;
-  for (const pair of pairs) {
-    if (!Array.isArray(pair)) continue;
-    const [rawLabel, count] = pair;
-    const label = String(rawLabel).toLowerCase();
-    if (label.includes('easy')) out.easyToCrack = count;
-    else if (label.includes('hard') || label.includes('strong')) out.strongHash = count;
-    else if (label.includes('plain') || label.includes('clear')) out.plainText = count;
-    else out.unknown += Number(count) || 0;
-  }
-  return out;
+// Confirmed live shape: passwords_strength is a 1-element array
+// containing ONE flat object: [{ EasyToCrack, PlainText, StrongHash, Unknown }].
+// Not label/count pairs as the docs implied.
+function normalizePasswordStrength(passwordsStrength) {
+  const entry = Array.isArray(passwordsStrength) ? passwordsStrength[0] : null;
+  return {
+    strongHash: entry?.StrongHash ?? 0,
+    easyToCrack: entry?.EasyToCrack ?? 0,
+    plainText: entry?.PlainText ?? 0,
+    unknown: entry?.Unknown ?? 0,
+  };
 }
 
-// yearwise_details comes as [[year, count], ...]
-function normalizeYearlyBreakdown(pairs) {
+// Confirmed live shape: yearwise_details is a 1-element array containing
+// ONE flat object keyed "y2007".."y2026" (not [year,count] pairs).
+// We strip the leading "y" and drop zero-count years so the output
+// only lists years that actually matter.
+function normalizeYearlyBreakdown(yearwiseDetails) {
+  const entry = Array.isArray(yearwiseDetails) ? yearwiseDetails[0] : null;
   const out = {};
-  if (!Array.isArray(pairs)) return out;
-  for (const pair of pairs) {
-    if (!Array.isArray(pair)) continue;
-    const [year, count] = pair;
-    out[String(year)] = count;
+  if (!entry) return out;
+  for (const [key, count] of Object.entries(entry)) {
+    if (count > 0) out[key.replace(/^y/, '')] = count;
   }
   return out;
 }
@@ -116,7 +115,7 @@ function shapeBreachData(email, raw) {
     exposed,
     breachCount,
     riskScore,
-    riskLabel: riskLabel(riskScore),
+    riskLabel: riskLabel(riskScore, raw?.BreachMetrics),
     breaches: breachDetails.map(normalizeBreachDetail),
     passwordStrength: normalizePasswordStrength(raw?.BreachMetrics?.passwords_strength),
     yearlyBreakdown: normalizeYearlyBreakdown(raw?.BreachMetrics?.yearwise_details),

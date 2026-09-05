@@ -43,6 +43,9 @@ async function fetchBreachAnalytics(email) {
   }
 
   const data = await res.json();
+  if (process.env.DEBUG_XON) {
+    console.log('[xponClient] raw BreachMetrics:', JSON.stringify(data.BreachMetrics, null, 2));
+  }
   return data;
 }
 

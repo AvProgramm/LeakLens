@@ -49,11 +49,17 @@ GET /api/check-email?email=user@example.com
 - `riskScore`/`riskLabel` here are a **placeholder heuristic** (breach count-based), not the real severity score — that's the AI/Gonka layer's job. They exist so the field is never missing while that layer is being built.
 - Errors: `400` bad/missing email, `429` upstream rate limit, `502` upstream unreachable — all return `{ "error": "..." }`.
 
-## Known gaps / things to double check before demo
+## Confirmed against a live request (2026-09-05)
 
-1. **XON's exact `BreachMetrics` risk-score key isn't confirmed** — their docs describe a risk score in prose but the field name isn't in their public SDK type defs. Run one real request against a known-breached email and `console.log(JSON.stringify(raw.BreachMetrics))` in `xponClient.js`, then simplify `getRiskScore()` in `shapeBreachData.js` once you see the real key.
-2. **Rate limits**: XON allows 2 req/sec, 25/hour, 100/day per IP (no key). `cache.js` gives a 15-min in-memory cache per email so repeated demo checks don't burn the quota — this resets on server restart and isn't shared across multiple dev machines, so don't all hammer the same test email at once during testing.
-3. No API key needed for `breach-analytics` — it's the free public endpoint.
+`riskScore`/`riskLabel` now come directly from XON's real `BreachMetrics.risk[0]` — no longer a placeholder heuristic (that only kicks in as a fallback if XON ever omits the field). `passwordStrength` and `yearlyBreakdown` are also fixed to match the real response shape, which turned out to differ from XON's own docs:
+- `passwords_strength` and `yearwise_details` are each a **1-element array containing one flat object**, not arrays of `[label, count]` pairs as the docs implied
+- `risk` is `[{ risk_label, risk_score }]`, score is **0-100** (not 0-10)
+
+## Known gaps
+
+1. **Rate limits**: XON allows 2 req/sec, 25/hour, 100/day per IP (no key). `cache.js` gives a 15-min in-memory cache per email so repeated demo checks don't burn the quota — this resets on server restart and isn't shared across multiple dev machines, so don't all hammer the same test email at once during testing.
+2. No API key needed for `breach-analytics` — it's the free public endpoint.
+3. `riskScore` is now XON's own score, not an AI-derived one — confirm with the AI-orchestration owner whether they want this field kept as a fast non-AI fallback, or dropped once their scoring lands.
 
 ## Files
 
