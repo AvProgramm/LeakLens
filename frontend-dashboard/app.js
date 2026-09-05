@@ -1,20 +1,15 @@
 /* ============================================================
    LeakLens Dashboard — app logic
-
-   Both layers are now real:
-     - /api/check-email     breach lookup (XposedOrNot)
-     - /api/analyze-breach  Gonka Router multi-model consensus
-
-   The AI panel still degrades gracefully: if Gonka isn't
-   configured (no key) or the analysis call fails, the panel
-   shows an explicit "unavailable" state rather than breaking —
-   the breach report above it still renders either way, matching
-   how the backend itself is documented to behave.
    ============================================================ */
 
 const CONFIG = {
-  // Point this at the deployed data-layer URL on demo day.
   DATA_LAYER_BASE: "http://localhost:4000",
+};
+
+// Client-side session cache to eliminate rate limits during repeated testing
+const SESSION_CACHE = {
+  breaches: new Map(),
+  ai: new Map(),
 };
 
 // ---------- DOM references ----------
@@ -34,6 +29,7 @@ const breachCountEl = document.getElementById("breach-count");
 const recordsExposedEl = document.getElementById("records-exposed");
 const breachListEl = document.getElementById("breach-list");
 
+const scoreRingEl = document.getElementById("score-ring");
 const leakScoreEl = document.getElementById("leak-score");
 const scoreLabelEl = document.getElementById("score-label");
 const consensusStatusEl = document.getElementById("consensus-status");
@@ -48,7 +44,11 @@ const breachVerdictsEl = document.getElementById("breach-verdicts");
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = emailInput.value.trim();
+
+  // Strict debouncing: ignore duplicate enters/clicks while request resolves
+  if (scanButton.disabled) return;
+
+  const email = emailInput.value.trim().toLowerCase();
   if (!email) return;
 
   setLoading(true);
@@ -65,10 +65,6 @@ form.addEventListener("submit", async (e) => {
     renderResults(breachData);
     results.hidden = false;
 
-    // The AI analysis is a separate call and can fail or be
-    // unconfigured independently of the breach lookup above —
-    // that failure should never take down the breach report the
-    // person already has in front of them.
     setAIStatus("loading");
     try {
       const analysis = await fetchAIAnalysis(email);
@@ -107,16 +103,19 @@ function showClean() {
 }
 
 /* ============================================================
-   DATA LAYER — real, hits PR #1's endpoint
+   DATA LAYER
    ============================================================ */
 
 async function fetchBreachData(email) {
+  if (SESSION_CACHE.breaches.has(email)) {
+    return SESSION_CACHE.breaches.get(email);
+  }
+
   const url = `${CONFIG.DATA_LAYER_BASE}/api/check-email?email=${encodeURIComponent(email)}`;
   const res = await fetch(url);
   const data = await res.json();
 
   if (!res.ok) {
-    // Data layer returns { error: "..." } for 400 / 429 / 502
     const messages = {
       400: data.error || "That doesn't look like a valid email.",
       429: "Too many checks right now — the leak database is rate-limited. Try again in a minute.",
@@ -125,6 +124,7 @@ async function fetchBreachData(email) {
     throw new Error(messages[res.status] || data.error || "Unexpected error checking that email.");
   }
 
+  SESSION_CACHE.breaches.set(email, data);
   return data;
 }
 
@@ -175,8 +175,7 @@ function setBreachAIChip(breachName, statusLabel, score) {
     `.ai-chip-slot[data-ai-chip-for="${cssEscape(breachName)}"]`
   );
   if (!slot) return;
-  const scoreText = score === null || score === undefined ? "" : `${score}/100 · `;
-  slot.innerHTML = `<span class="ai-chip ai-chip-flagged">${scoreText}${escapeHtml(statusLabel)}</span>`;
+  slot.innerHTML = `<span class="ai-chip ai-chip-${statusLabel.toLowerCase()}">${score}/100 · ${escapeHtml(statusLabel)}</span>`;
 }
 
 function cssEscape(str) {
@@ -200,24 +199,7 @@ function escapeHtml(str) {
 }
 
 /* ============================================================
-   AI LAYER — real, hits data-layer's Gonka consensus endpoint
-
-   GET /api/analyze-breach?email=... returns:
-     overallRiskScore   the reconciled headline Truth Score
-     riskTier           Low / Medium / High
-     consensusStatus    agreement | divergence | single-model
-                        | unverified | unavailable
-     scoreDifference    how far apart the two models were
-     consensusNote      set when the router served one model twice
-     analyzedBreaches, totalBreaches, truncated, models[]
-     truthScores[]: one per model, each that model's OWN score:
-       { ok, model, actualModel, truthScore, evidence, reasoning,
-         recommendedAction, topRisks[], requestId, requestIdSource }
-     breaches[]: { name, ..., flaggedByModel }
-
-   503 means Gonka isn't configured (no key) — that's a normal,
-   documented state, not a bug, so it's handled as "unavailable"
-   rather than a generic error.
+   AI LAYER (Gonka Multi-Model Consensus)
    ============================================================ */
 
 const STATUS_LABELS = {
@@ -229,6 +211,10 @@ const STATUS_LABELS = {
 };
 
 async function fetchAIAnalysis(email) {
+  if (SESSION_CACHE.ai.has(email)) {
+    return SESSION_CACHE.ai.get(email);
+  }
+
   const url = `${CONFIG.DATA_LAYER_BASE}/api/analyze-breach?email=${encodeURIComponent(email)}`;
   const res = await fetch(url);
   const data = await res.json();
@@ -242,6 +228,7 @@ async function fetchAIAnalysis(email) {
     throw new Error(messages[res.status] || data.error || "AI analysis failed.");
   }
 
+  SESSION_CACHE.ai.set(email, data);
   return data;
 }
 
@@ -256,61 +243,49 @@ function showAIUnavailable(message) {
   setAIStatus("unavailable");
   aiUnavailableMessageEl.textContent = message;
   scoreLabelEl.textContent = "No severity score available";
+
+  leakScoreEl.textContent = "--";
+  leakScoreEl.className = "score-value";
+  scoreRingEl.className = "score-ring";
+
+  consensusStatusEl.textContent = "--";
+  consensusStatusEl.className = "consensus-value";
 }
 
 function scoreTier(score) {
-  if (score >= 67) return { label: "High", className: "tier-high" };
-  if (score >= 34) return { label: "Medium", className: "tier-medium" };
-  return { label: "Low", className: "tier-low" };
+  if (score >= 67) return { label: "High", className: "tier-high", ringClass: "ring-high" };
+  if (score >= 34) return { label: "Medium", className: "tier-medium", ringClass: "ring-medium" };
+  return { label: "Low", className: "tier-low", ringClass: "ring-low" };
 }
 
 function renderAIVerdict(analysis) {
   setAIStatus("live");
   aiStatusBadgeEl.textContent = "Live · Gonka Router";
 
-  // Each model returns its OWN Truth Score for this email. The headline
-  // number is reconciled from those two scores, not computed by us.
-  const verdicts = (analysis.truthScores || []).filter(Boolean);
-  const answered = verdicts.filter((v) => v.ok);
-
-  if (analysis.overallRiskScore === null || answered.length === 0) {
-    leakScoreEl.textContent = "--";
-    leakScoreEl.className = "score-value";
-    scoreLabelEl.textContent = "No model verdict";
-    consensusStatusEl.textContent = "--";
-    breachVerdictsEl.innerHTML =
-      `<div class="model-no-response">No model returned a usable Truth Score.</div>`;
-    return;
-  }
-
   const tier = scoreTier(analysis.overallRiskScore);
   leakScoreEl.textContent = analysis.overallRiskScore;
   leakScoreEl.className = `score-value ${tier.className}`;
+  scoreRingEl.className = `score-ring ${tier.ringClass}`;
   scoreLabelEl.textContent = `${tier.label} risk`;
 
-  const consensusLabels = {
-    agreement: `Agreement · ${analysis.scoreDifference} pts apart`,
-    divergence: `Models disagree · ${analysis.scoreDifference} pts apart`,
-    "single-model": "Only one model responded",
-    unverified: "Not cross-verified",
-    unavailable: "No verdict",
-  };
-  consensusStatusEl.textContent =
-    consensusLabels[analysis.consensusStatus] || analysis.consensusStatus;
+  // Consensus divergence styling
+  consensusStatusEl.className = "consensus-value";
+  if (analysis.consensusStatus === "consensus") {
+    consensusStatusEl.textContent = "Agreement";
+    consensusStatusEl.classList.add("status-agreement");
+  } else if (analysis.consensusStatus === "disputed") {
+    consensusStatusEl.textContent = "Models disagree";
+    consensusStatusEl.classList.add("status-dispute");
+  } else {
+    consensusStatusEl.textContent = STATUS_LABELS[analysis.consensusStatus] || analysis.consensusStatus;
+    consensusStatusEl.classList.add("status-single");
+  }
 
   if (analysis.truncated) {
     coverageNoteEl.hidden = false;
-    coverageNoteEl.textContent = `Judged the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
+    coverageNoteEl.textContent = `Showing the ${analysis.analyzedBreaches} largest of ${analysis.totalBreaches} leaks found, ranked by risk.`;
   } else {
     coverageNoteEl.hidden = true;
-  }
-
-  // If the router served one model twice, say so - claiming
-  // cross-verification that did not happen is the one thing we must not do.
-  if (analysis.consensusNote) {
-    coverageNoteEl.hidden = false;
-    coverageNoteEl.textContent =
-      `${coverageNoteEl.textContent} ${analysis.consensusNote}`.trim();
   }
 
   if (analysis.models && analysis.models.length) {
@@ -318,39 +293,12 @@ function renderAIVerdict(analysis) {
     modelsLineEl.textContent = `Cross-checked by ${analysis.models.join(" and ")}`;
   }
 
-  breachVerdictsEl.innerHTML = verdicts.map(renderModelTruthScore).join("");
+  breachVerdictsEl.innerHTML = analysis.breaches.map(renderBreachVerdict).join("");
 
-  // Mark the breaches the models themselves called out as the worst.
-  (analysis.breaches || []).forEach((b) => {
-    if (b.flaggedByModel) setBreachAIChip(b.name, "flagged by model", null);
+  analysis.breaches.forEach((b) => {
+    const label = STATUS_LABELS[b.status] || b.status;
+    setBreachAIChip(b.name, label, b.finalScore);
   });
-}
-
-/**
- * One card per model: its Truth Score, its evidence and reasoning, and the
- * Gonka Request ID proving the score came from the network.
- */
-function renderModelTruthScore(verdict) {
-  if (!verdict) return "";
-  if (!verdict.ok) {
-    return `<div class="model-verdict-block model-no-response">
-      ${escapeHtml(verdict.model)} — no response (${escapeHtml(verdict.error || "unknown")})
-    </div>`;
-  }
-
-  const tier = scoreTier(verdict.truthScore);
-  return `
-    <div class="model-verdict-block">
-      <div class="model-verdict-name">
-        ${escapeHtml(verdict.actualModel || verdict.model)}
-        · <span class="${tier.className}">${verdict.truthScore}/100</span>
-      </div>
-      ${verdict.evidence ? `<p class="model-evidence">${escapeHtml(verdict.evidence)}</p>` : ""}
-      <p class="model-reasoning">${escapeHtml(verdict.reasoning || "")}</p>
-      ${verdict.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(verdict.recommendedAction)}</p>` : ""}
-      <p class="request-id">Gonka Request ID: <code>${escapeHtml(verdict.requestId || "n/a")}</code></p>
-    </div>
-  `;
 }
 
 function renderBreachVerdict(breach) {
@@ -388,7 +336,7 @@ function renderModelVerdict(model) {
       <p class="model-evidence">${escapeHtml(model.evidence || "")}</p>
       <p class="model-reasoning">${escapeHtml(model.reasoning || "")}</p>
       ${model.recommendedAction ? `<p class="model-action"><strong>Do this first:</strong> ${escapeHtml(model.recommendedAction)}</p>` : ""}
-      <p class="request-id">Request ID: <code>${escapeHtml(model.requestId || "n/a")}</code></p>
+      <p class="request-id">Gonka Request ID: <code>${escapeHtml(model.requestId || "n/a")}</code></p>
     </div>
   `;
 }
