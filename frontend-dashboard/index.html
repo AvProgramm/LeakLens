@@ -6,7 +6,7 @@
   <title>LeakLens — Data leak assessment</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -15,7 +15,7 @@
     <header class="scan-header">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" width="28" height="28">
+          <svg viewBox="0 0 32 32" width="30" height="30">
             <circle cx="14" cy="14" r="9" fill="none" stroke="currentColor" stroke-width="2.5"/>
             <line x1="20.5" y1="20.5" x2="27" y2="27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
           </svg>
@@ -29,6 +29,12 @@
       <form id="scan-form" novalidate>
         <label for="email-input">Email address</label>
         <div class="input-row">
+          <span class="input-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16">
+              <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
+              <line x1="15.3" y1="15.3" x2="20.5" y2="20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </span>
           <input id="email-input" type="email" placeholder="you@example.com" autocomplete="off" required />
           <button type="submit" id="scan-button">
             <span class="btn-label">Scan</span>
@@ -42,12 +48,18 @@
     <div id="error-banner" class="error-banner" hidden></div>
 
     <section id="empty-state" class="empty-state">
+      <div class="state-mark state-mark-neutral" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/>
+          <line x1="15.3" y1="15.3" x2="20.5" y2="20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
       <p>Enter an email above to see what's been exposed.</p>
     </section>
 
     <section id="clean-state" class="clean-state" hidden>
-      <div class="clean-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="22" height="22">
+      <div class="state-mark state-mark-clean" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20">
           <path d="M4 12l5 5L20 6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
@@ -62,6 +74,7 @@
           <span class="stat-value" id="breach-count">0</span>
           <span class="stat-label">leaks found</span>
         </div>
+        <div class="summary-divider" aria-hidden="true"></div>
         <div class="summary-stat">
           <span class="stat-value" id="records-exposed">0</span>
           <span class="stat-label">records in those leaks</span>
@@ -83,10 +96,12 @@
             </div>
 
             <div class="score-display">
-              <span class="score-value" id="leak-score">--</span>
-              <span class="score-max">/100</span>
+              <div class="score-ring" id="score-ring">
+                <span class="score-value" id="leak-score">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <p class="score-label" id="score-label">Waiting on Gonka analysis</p>
             </div>
-            <p class="score-label" id="score-label">Waiting on Gonka analysis</p>
 
             <div class="consensus-row">
               <span class="consensus-label">Model consensus</span>
