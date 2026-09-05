@@ -1,0 +1,26 @@
+{
+  "name": "leaklens-data-layer",
+  "version": "0.2.0",
+  "description": "LeakLens data-layer: XposedOrNot integration, Gonka Router multi-model consensus, shared breach JSON contract",
+  "main": "src/server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "verify-gonka": "node scripts/verifyGonka.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "openai": "^4.104.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  }
+}
