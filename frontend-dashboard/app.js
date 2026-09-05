@@ -25,7 +25,11 @@ const CONFIG = {
   // router leaves the panel spinning with no way for the user to tell
   // whether it is working.
   BREACH_TIMEOUT_MS: 30000,
-  AI_TIMEOUT_MS: 180000,
+  // A cold call on the deployed free tier was measured at 222s - above the
+  // 180s ceiling this used to have, so the dashboard aborted a request that
+  // was about to succeed. Warmed calls are near-instant, so this ceiling
+  // only ever applies to the first scan after a deploy or a sleep.
+  AI_TIMEOUT_MS: 300000,
 };
 
 /**

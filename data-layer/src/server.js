@@ -9,6 +9,7 @@
  */
 
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -88,17 +89,29 @@ function readEmailParam(req) {
 }
 
 /**
+ * Cache keys are namespaced because the two endpoints cache different
+ * things for the same email - the raw lookup and the model verdict.
+ */
+function breachCacheKey(email) {
+  return `breach:${email}`;
+}
+
+function analysisCacheKey(email) {
+  return `analysis:${email}`;
+}
+
+/**
  * Fetch-and-shape with caching, shared by both endpoints. This is the only
  * place that touches XposedOrNot, so a scan costs exactly one upstream
  * request no matter how many of our endpoints the dashboard calls.
  */
 async function getShapedBreachData(email) {
-  const cachedResult = cache.get(email);
+  const cachedResult = cache.get(breachCacheKey(email));
   if (cachedResult) return { data: cachedResult, cached: true };
 
   const rawBreachData = await fetchBreachAnalytics(email);
   const shaped = shapeBreachData(email, rawBreachData);
-  cache.set(email, shaped);
+  cache.set(breachCacheKey(email), shaped);
   return { data: shaped, cached: false };
 }
 
@@ -169,34 +182,67 @@ app.get('/api/analyze-breach', analysisRateLimiter, async (req, res) => {
   }
 
   try {
+    // Cache the verdict, not just the lookup. Two reasoning models over a
+    // decentralized network take minutes on a cold call, and without this
+    // every repeat scan pays that again - the fast repeats we measured were
+    // the ROUTER's own prompt cache, which we neither control nor can rely
+    // on during judging. Caching here makes a warmed demo instant for real.
+    const cachedAnalysis = cache.get(analysisCacheKey(email));
+    if (cachedAnalysis) {
+      return res.json({ ...cachedAnalysis, cached: true });
+    }
+
     const { data } = await getShapedBreachData(email);
-    return res.json(await analyzeBreachSeverity(data));
+    const analysis = await analyzeBreachSeverity(data);
+
+    // Only cache a verdict that actually has model output behind it, so a
+    // transient outage is retried next time rather than pinned for 15 min.
+    if (analysis.overallRiskScore !== null) {
+      cache.set(analysisCacheKey(email), analysis);
+    }
+
+    return res.json({ ...analysis, cached: false });
   } catch (err) {
     return sendUpstreamError(res, err, 'analyze-breach');
   }
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`LeakLens data-layer listening on http://localhost:${PORT}`);
-  console.log(
-    isGonkaConfigured()
-      ? `Gonka configured - models: ${GONKA_MODEL_PRIMARY}, ${GONKA_MODEL_SECONDARY}`
-      : 'Gonka NOT configured - set GONKA_API_KEY in data-layer/.env to enable AI analysis',
-  );
-});
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(
-      `Port ${PORT} is already in use. Set a different PORT in your .env file, or stop the process using it.`,
+/**
+ * Only bind a port when this file is run directly. Importing it (tests, or
+ * anything that wants the configured app) previously started a listener as
+ * a side effect, which meant an import could collide with a running server
+ * and call process.exit on the importer.
+ */
+function startServer() {
+  const server = app.listen(PORT, () => {
+    console.log(`LeakLens data-layer listening on http://localhost:${PORT}`);
+    console.log(
+      isGonkaConfigured()
+        ? `Gonka configured - models: ${GONKA_MODEL_PRIMARY}, ${GONKA_MODEL_SECONDARY}`
+        : 'Gonka NOT configured - set GONKA_API_KEY in data-layer/.env to enable AI analysis',
     );
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `Port ${PORT} is already in use. Set a different PORT in your .env file, or stop the process using it.`,
+      );
+      process.exit(1);
+    }
+
+    // Any other listen error is fatal too, and exiting with a logged reason
+    // beats throwing inside an event handler where the stack is unhelpful.
+    console.error('Server failed to start:', err.message);
     process.exit(1);
-  }
+  });
 
-  // Any other listen error is fatal too, and exiting with a logged reason
-  // beats throwing inside an event handler where the stack is unhelpful.
-  console.error('Server failed to start:', err.message);
-  process.exit(1);
-});
+  return server;
+}
 
-export { app };
+const isRunDirectly = process.argv[1]
+  && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isRunDirectly) startServer();
+
+export { app, startServer };

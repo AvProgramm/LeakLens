@@ -211,3 +211,32 @@ test('analysis is capped so a heavily-breached email cannot stall the demo', asy
   // live demo fast and bounds the token spend.
   assert.equal(receivedRequestBodies.length, 2, 'expected exactly one call per model');
 });
+
+
+test('a repeated analysis is served from cache without calling any model', async () => {
+  // The demo depends on this: a warmed scan must be instant because WE
+  // cached it, not because the router happened to cache the prompt.
+  const { app } = await import('../src/server.js');
+  const server = app.listen(0);
+  const port = server.address().port;
+
+  try {
+    const url = `http://127.0.0.1:${port}/api/analyze-breach?email=cachetest@example.com`;
+
+    receivedRequestBodies = [];
+    const first = await fetch(url).then((r) => r.json());
+    const callsAfterFirst = receivedRequestBodies.length;
+
+    const second = await fetch(url).then((r) => r.json());
+
+    assert.equal(second.cached, true, 'second call should report cached');
+    assert.equal(first.overallRiskScore, second.overallRiskScore);
+    assert.equal(
+      receivedRequestBodies.length,
+      callsAfterFirst,
+      'a cached analysis must not call the models again',
+    );
+  } finally {
+    server.close();
+  }
+});
