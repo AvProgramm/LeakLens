@@ -13,7 +13,7 @@ npm run verify-gonka      # confirms the key + model IDs work
 npm start                 # http://localhost:4000
 ```
 
-`npm run dev` restarts on save. `npm test` runs the suite (34 tests, no
+`npm run dev` restarts on save. `npm test` runs the suite (41 tests, no
 network or API key required).
 
 The server runs **without** a Gonka key: breach lookup works fully and the
@@ -77,8 +77,8 @@ so the transparency claim stays honest instead of showing an opaque string.
 
 ### Models
 
-Two independent models cross-verify every breach. IDs are **case-sensitive**
-and configurable:
+Two independent models each judge the whole breach profile and return their
+own Truth Score. IDs are **case-sensitive** and configurable:
 
 ```
 GONKA_MODEL_PRIMARY=MiniMaxAI/MiniMax-M2.7
@@ -88,32 +88,57 @@ GONKA_MODEL_SECONDARY=deepseek-ai/DeepSeek-V4-Flash-0731
 If either 404s, run `npm run verify-gonka` — it prints the exact catalogue
 your key can reach, then paste the correct IDs into `.env`.
 
-### Consensus logic
+### The pipeline
+
+```
+email  ->  breach profile  ->  N models on Gonka
+       ->  each model returns its OWN Truth Score (0-100)
+       ->  cross-verification of those scores
+```
+
+The headline number is a **model's judgment**, not our arithmetic. Each model
+receives the whole breach profile in one call and returns a single Truth
+Score for that person's exposure, with the evidence and reasoning behind it.
+We then compare the two models against each other.
+
+An earlier version scored each breach separately and averaged the results
+into a number no model had ever produced. That inverted the brief: the score
+has to come from the network, and the models have to be comparable to each
+other at the top level for cross-verification to mean anything.
+
+Asking each model once rather than once per breach is also what keeps the
+demo fast: **two inference calls total, whatever the breach count.**
+
+### Reconciling the two scores
 
 > **Router caveat, verified live.** `moonshotai/Kimi-K2.6` is listed in the
 > catalogue but requests for it are answered by MiniMax, and DeepSeek is
 > occasionally misrouted the same way. Every response is checked against the
 > model that actually answered (`actualModel`); a misroute is retried once,
-> and if both verdicts still come from one model the breach is reported as
+> and if both scores still come from one model the result is reported as
 > `unverified` rather than being passed off as cross-verified.
 
-| Condition | `status` | `finalScore` |
+| Condition | `consensusStatus` | `overallRiskScore` |
 |---|---|---|
-| scores within 25 points | `consensus` | mean of the two |
-| scores more than 25 apart | `disputed` | **the higher score** |
+| scores within 25 points | `agreement` | mean of the two |
+| scores more than 25 apart | `divergence` | **the higher score** |
 | only one model answered | `single-model` | that model's score |
-| the router served one model twice | `unverified` | the higher score, clearly labelled |
+| the router served one model twice | `unverified` | higher score, clearly labelled |
 | neither answered | `unavailable` | `null` — never invented |
 
-On a genuine dispute we take the *higher* score on purpose: under-warning
+On a genuine divergence we take the *higher* score on purpose: under-warning
 someone about a real exposure is the more harmful of the two mistakes. The
 disagreement is always surfaced in the UI rather than averaged away.
 
-The headline `overallRiskScore` is **not** an average. Averaging would mean
-one critical breach plus nine trivial ones scores lower than the critical
-breach alone — telling someone they are safer the more exposed they get.
-Instead the worst breach sets the floor and breadth adds a bounded
-escalation, capped at 100.
+### Reasoning models
+
+Both routed models emit a long `<think>…</think>` block before answering, and
+that block quotes our own prompt back — including the example JSON in it. The
+parser strips reasoning blocks and, when it must scan, takes the **last**
+balanced object carrying a score, so a draft from inside the model's scratch
+work can never be mistaken for its final answer. `GONKA_MAX_TOKENS` (default
+4000) has to cover the reasoning *and* the answer; below that the models were
+being cut off mid-thought and never reached their JSON.
 
 ---
 
@@ -166,43 +191,61 @@ Both data endpoints share one cached upstream lookup, so a full scan costs
 - `riskScore`/`riskLabel` are a placeholder breach-count heuristic (0-10).
   The real severity number is `overallRiskScore` (0-100) from the AI layer.
 
-### `/api/analyze-breach` — the consensus report
+### `/api/analyze-breach` — the Truth Score report
 
 ```json
 {
   "email": "user@example.com",
   "totalBreaches": 214,
-  "analyzedBreaches": 8,
+  "analyzedBreaches": 3,
   "truncated": true,
-  "overallRiskScore": 92,
-  "consensusStatus": "divergence",
-  "disputedCount": 3,
-  "models": ["moonshotai/Kimi-K2.6", "MiniMaxAI/MiniMax-M2.7"],
+  "overallRiskScore": 81,
+  "riskTier": "High",
+  "consensusStatus": "agreement",
+  "scoreDifference": 18,
+  "consensusNote": null,
+  "models": ["MiniMaxAI/MiniMax-M2.7", "deepseek-ai/DeepSeek-V4-Flash-0731"],
+  "truthScores": [
+    {
+      "ok": true,
+      "model": "MiniMaxAI/MiniMax-M2.7",
+      "actualModel": "MiniMaxAI/MiniMax-M2.7",
+      "misrouted": false,
+      "truthScore": 90,
+      "evidence": "Plaintext passwords exposed in Collection-1 and ExploitIN...",
+      "reasoning": "The individual's email appears in three large breaches...",
+      "recommendedAction": "Change any reused password and enable 2FA.",
+      "topRisks": ["Collection-1", "ExploitIN"],
+      "requestId": "req-1788609085967652852-1148162",
+      "requestIdSource": "x-request-id"
+    },
+    { "...": "one entry per model, same shape" }
+  ],
   "breaches": [
     {
       "name": "Collection-1",
-      "status": "disputed",
-      "finalScore": 92,
-      "scoreDifference": 41,
-      "modelA": {
-        "ok": true,
-        "model": "moonshotai/Kimi-K2.6",
-        "severityScore": 92,
-        "evidence": "Passwords stored in plain text",
-        "reasoning": "...",
-        "recommendedAction": "...",
-        "requestId": "gonka-...",
-        "requestIdSource": "x-gonka-request-id"
-      },
-      "modelB": { "...": "same shape" }
+      "year": "2019",
+      "industry": "Information Technology",
+      "recordsExposed": 790803860,
+      "passwordRisk": "plaintext",
+      "dataExposed": ["Email addresses", "Passwords"],
+      "flaggedByModel": true
     }
   ]
 }
 ```
 
-Only the largest `MAX_BREACHES_ANALYZED` breaches are analysed (default 8);
-`truncated` says so plainly so the headline number is never quietly based on
-less data than the breach list shows.
+- `truthScores[]` is the heart of it: **one entry per model**, each carrying
+  that model's own score and its Gonka Request ID. A failed model appears as
+  `{ ok: false, model, error }` rather than being dropped, so the dashboard
+  can show that only one model answered.
+- `overallRiskScore` is reconciled from those scores per the table above, and
+  is `null` if no model answered — never a fabricated `0`.
+- `consensusNote` is set only when the router served the same model twice.
+- `flaggedByModel` marks breaches the models themselves named as top risks.
+- Only the largest `MAX_BREACHES_ANALYZED` breaches go into the profile
+  (default 3, tuned for demo speed); `truncated` says so plainly so the
+  headline is never quietly based on less data than the breach list shows.
 
 ### Errors
 

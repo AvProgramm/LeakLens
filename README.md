@@ -23,7 +23,7 @@ LeakLens closes that gap:
 
 1. **Checks** an email against known public data leaks (XposedOrNot).
 2. **Asks two independent models** through the official Gonka Router how severe
-   each breach actually is for that person.
+   that person's total exposure is, each returning its own Truth Score.
 3. **Shows disagreement** between the models instead of hiding it behind a
    single confident number.
 4. **Explains** what was exposed and what to secure first.
@@ -41,11 +41,11 @@ screen and take the more cautious score.
 | Requirement | Where it lives |
 | --- | --- |
 | All AI inference via `gonkarouter.io` | [`data-layer/src/gonkaClient.js`](data-layer/src/gonkaClient.js) |
-| Multi-model cross-verification | Two models per breach, [`analyzeBreachSeverity.js`](data-layer/src/analyzeBreachSeverity.js) |
-| Consensus logic for conflict | `reconcileModelVerdicts()` — agree / dispute / single-model / unavailable |
-| Score 0–100 + reasoning trace | `overallRiskScore` plus per-model reasoning and cited evidence |
+| Multi-model cross-verification | Two models, one Truth Score each, [`analyzeBreachSeverity.js`](data-layer/src/analyzeBreachSeverity.js) |
+| Consensus logic for conflict | `reconcileTruthScores()` — agreement / divergence / single-model / unverified |
+| Score 0–100 + reasoning trace | each model's own `truthScore`, with its reasoning and cited evidence |
 | Request ID per inference step | Displayed on every verdict row in the dashboard |
-| Neutrality prompt | `buildSeverityPrompt()` — facts only, cite evidence, no speculation |
+| Neutrality prompt | `buildTruthScorePrompt()` — facts only, cite evidence, no speculation |
 
 Full integration notes are in **[`data-layer/README.md`](data-layer/README.md)**.
 
@@ -141,8 +141,8 @@ Model IDs are **case-sensitive** and the catalogue can change.
 correct IDs into `.env`:
 
 ```ini
-GONKA_MODEL_PRIMARY=moonshotai/Kimi-K2.6
-GONKA_MODEL_SECONDARY=MiniMaxAI/MiniMax-M2.7
+GONKA_MODEL_PRIMARY=MiniMaxAI/MiniMax-M2.7
+GONKA_MODEL_SECONDARY=deepseek-ai/DeepSeek-V4-Flash-0731
 ```
 
 ---
@@ -181,7 +181,7 @@ If you run the dashboard yourself, make sure `DATA_LAYER_BASE` at the top of
 | Command | What it does |
 | --- | --- |
 | `npm run setup` | Installs dependencies (run once, or after `git pull`) |
-| `npm start` | Runs API + dashboard together |
+| `npm start` / `npm run dev:full` | Runs API + dashboard together |
 | `npm test` | Runs the full test suite |
 | `npm run verify-gonka` | Checks your API key and model IDs |
 | `npm run backend` | Runs only the API |
@@ -194,13 +194,13 @@ If you run the dashboard yourself, make sure `DATA_LAYER_BASE` at the top of
 npm test
 ```
 
-**34 tests. No API key and no network required** — the Gonka integration is
+**41 tests. No API key and no network required** — the Gonka integration is
 tested against a local stub that speaks the same OpenAI-compatible protocol.
 
 | Suite | Covers |
 | --- | --- |
 | `contract.test.js` | The shared JSON contract stays complete and null-free |
-| `consensus.test.js` | Agreement, dispute, partial failure, and scoring rules |
+| `consensus.test.js` | Truth Score parsing, reconciliation, misroute detection |
 | `privacy.test.js` | Email never stored in plaintext, never sent to models |
 | `integration.test.js` | Full run against an OpenAI-compatible router stub |
 
@@ -220,8 +220,8 @@ tested against a local stub that speaks the same OpenAI-compatible protocol.
     ├── xponClient.js ─────────▶ XposedOrNot        breach lookup
     ├── shapeBreachData.js                          → the shared contract
     ├── cache.js                                    hashed-key TTL cache
-    └── gonkaClient.js ────────▶ Gonka Router       2 models, in parallel
-                                 (OpenAI-compatible)
+    └── gonkaClient.js ────────▶ Gonka Router       2 models in parallel,
+                                 (OpenAI-compatible)  one Truth Score each
 ```
 
 **One upstream lookup per scan.** Both endpoints share a cached, shaped result,
@@ -285,7 +285,7 @@ LeakLens/
 ├── data-layer/              Breach lookup + Gonka consensus (the backend)
 │   ├── src/                 config, gonkaClient, analyze, shape, cache, server
 │   ├── scripts/             verifyGonka.js — pre-demo key check
-│   ├── tests/               34 tests
+│   ├── tests/               41 tests
 │   └── .env.example         Environment template — copy to .env
 ├── frontend-dashboard/      Dashboard (no build step)
 ├── scripts/dev.js           Runs both servers with one command
