@@ -1,0 +1,18 @@
+{
+  "name": "leaklens",
+  "version": "0.2.0",
+  "description": "Privacy-first breach intelligence with multi-model Gonka Router consensus",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "setup": "npm install --prefix data-layer",
+    "start": "node scripts/dev.js",
+    "dev": "node scripts/dev.js",
+    "backend": "npm start --prefix data-layer",
+    "test": "npm test --prefix data-layer",
+    "verify-gonka": "npm run verify-gonka --prefix data-layer"
+  }
+}
