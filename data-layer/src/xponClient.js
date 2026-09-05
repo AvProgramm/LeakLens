@@ -53,7 +53,15 @@ async function requestJson(url, label) {
         throw createError(`${label} API error: ${response.status}`, 'XON_ERROR', response.status);
       }
 
-      return await response.json();
+      const data = await response.json();
+
+      // XON's real response shape differs from their docs, so keep a way to
+      // see it. Logs breach metadata only - never the email address.
+      if (process.env.DEBUG_XON) {
+        console.log(`[xponClient] raw BreachMetrics:`, JSON.stringify(data?.BreachMetrics, null, 2));
+      }
+
+      return data;
     } catch (error) {
       // Deliberate API errors are final - only genuine network faults retry.
       if (error.code === 'RATE_LIMITED' || error.code === 'XON_ERROR') throw error;

@@ -165,8 +165,8 @@ Both data endpoints share one cached upstream lookup, so a full scan costs
   "cached": false,
   "exposed": true,
   "breachCount": 1,
-  "riskScore": 2,
-  "riskLabel": "Low",
+  "riskScore": 100,
+  "riskLabel": "Critical",
   "breaches": [
     {
       "name": "SweClockers",
@@ -188,8 +188,11 @@ Both data endpoints share one cached upstream lookup, so a full scan costs
 - `exposed: false` with empty arrays/zeros for a clean email — never `null`.
   Downstream code never has to null-check this contract; `tests/contract.test.js`
   enforces it.
-- `riskScore`/`riskLabel` are a placeholder breach-count heuristic (0-10).
-  The real severity number is `overallRiskScore` (0-100) from the AI layer.
+- `riskScore`/`riskLabel` come straight from XON's own `BreachMetrics.risk[0]`
+  and are **0-100** (`risk_label` is XON's wording: Low/Medium/High/Critical).
+  The breach-count heuristic remains only as a fallback if XON omits the field.
+  This is a fast, non-AI number; the AI layer's `overallRiskScore` is the
+  Truth Score the product leads with.
 
 ### `/api/analyze-breach` — the Truth Score report
 
@@ -270,9 +273,12 @@ token credits from being drained by a stranger who finds the deployed URL.
 
 ## Known limits
 
-1. **XON's `BreachMetrics` risk-score key isn't confirmed.** `getRiskScore()`
-   checks the plausible keys and falls back to a breach-count heuristic. This
-   only affects the placeholder 0-10 score, not the AI score.
+1. **XON's real response differs from their published docs.** Confirmed
+   against a live request: `risk`, `passwords_strength` and `yearwise_details`
+   are each a **1-element array wrapping one flat object**, not the
+   `[label, count]` pairs the docs imply. Parsing them as pairs returns all
+   zeros *without erroring*, so change these only with a real response in
+   hand — `DEBUG_XON=1 npm start` prints the raw `BreachMetrics`.
 2. **XposedOrNot allows 2 req/sec, 25/hour, 100/day per IP.** The 15-minute
    cache is what keeps a repeated demo alive; it resets on restart and is not
    shared between machines.

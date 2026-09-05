@@ -26,9 +26,12 @@ const rawXonResponse = {
       },
     ],
   },
+  // The REAL live shape: each of these is a 1-element array wrapping one
+  // flat object, not the [label, count] pairs XON's docs imply.
   BreachMetrics: {
-    passwords_strength: [['EasyToCrack', 0], ['PlainText', 0], ['StrongHash', 1]],
-    yearwise_details: [['2015', 1]],
+    risk: [{ risk_label: 'Low', risk_score: 23 }],
+    passwords_strength: [{ EasyToCrack: 0, PlainText: 0, StrongHash: 1, Unknown: 0 }],
+    yearwise_details: [{ y2014: 0, y2015: 1 }],
   },
   PastesSummary: { cnt: 0 },
 };
@@ -85,8 +88,8 @@ test('counts are numbers even when XON sends them as strings', () => {
       breaches_details: [{ breach: 'X', xposed_records: '1000', xposed_data: 'Email addresses' }],
     },
     BreachMetrics: {
-      passwords_strength: [['StrongHash', '3'], ['EasyToCrack', '2']],
-      yearwise_details: [['2019', '4']],
+      passwords_strength: [{ StrongHash: '3', EasyToCrack: '2', PlainText: '0', Unknown: '0' }],
+      yearwise_details: [{ y2019: '4' }],
     },
   };
 
@@ -98,16 +101,50 @@ test('counts are numbers even when XON sends them as strings', () => {
   assert.equal(shaped.passwordStrength.easyToCrack, 2);
   assert.equal(shaped.yearlyBreakdown['2019'], 4);
 
-  // The bug this guards: string counts used to concatenate instead of add.
-  const total = shaped.passwordStrength.strongHash + shaped.passwordStrength.easyToCrack;
-  assert.equal(total, 5);
+  // The bug this guards: string counts must add, not concatenate.
+  assert.equal(shaped.passwordStrength.strongHash + shaped.passwordStrength.easyToCrack, 5);
 });
 
-test('duplicate password-strength labels accumulate rather than overwrite', () => {
+// XON's real BreachMetrics shape differs from their published docs. Parsing
+// it as [label, count] pairs returns all zeros WITHOUT erroring, so these
+// assertions are what stop that silent regression coming back.
+test('password strength is read from the live 1-element-array shape', () => {
   const shaped = shapeBreachData('user@example.com', {
-    BreachMetrics: { passwords_strength: [['EasyToCrack', 2], ['easy to crack', 3]] },
+    BreachMetrics: {
+      passwords_strength: [{ EasyToCrack: 50, PlainText: 22, StrongHash: 50, Unknown: 92 }],
+    },
   });
-  assert.equal(shaped.passwordStrength.easyToCrack, 5);
+
+  assert.deepEqual(shaped.passwordStrength, {
+    strongHash: 50, easyToCrack: 50, plainText: 22, unknown: 92,
+  });
+});
+
+test('yearly breakdown strips the y prefix and drops empty years', () => {
+  const shaped = shapeBreachData('user@example.com', {
+    BreachMetrics: { yearwise_details: [{ y2007: 0, y2009: 1, y2015: 10 }] },
+  });
+
+  assert.deepEqual(shaped.yearlyBreakdown, { 2009: 1, 2015: 10 });
+});
+
+test("riskScore uses XON's own 0-100 score and label", () => {
+  const shaped = shapeBreachData('user@example.com', {
+    ExposedBreaches: { breaches_details: [{ breach: 'X' }] },
+    BreachMetrics: { risk: [{ risk_label: 'Critical', risk_score: 100 }] },
+  });
+
+  assert.equal(shaped.riskScore, 100);
+  assert.equal(shaped.riskLabel, 'Critical');
+});
+
+test('the heuristic only applies when XON omits risk entirely', () => {
+  const shaped = shapeBreachData('user@example.com', {
+    ExposedBreaches: { breaches_details: [{ breach: 'X' }, { breach: 'Y' }] },
+  });
+
+  assert.equal(shaped.riskScore, 40);
+  assert.equal(shaped.riskLabel, 'Medium');
 });
 
 test('xposed_data already an array is passed through unchanged', () => {
